@@ -149,7 +149,7 @@ if [ $stage -le 1 ] && [ $stop_stage -ge 1 ]; then
   # to $dl_dir/GigaSpeech
   mkdir -p data/manifests
   lhotse prepare gigaspeech \
-    --subset XL \
+    --subset M \
     --subset DEV \
     --subset TEST \
     -j $nj \
@@ -178,19 +178,19 @@ if [ $stage -le 4 ] && [ $stop_stage -ge 4 ]; then
 fi
 
 if [ $stage -le 5 ] && [ $stop_stage -ge 5 ]; then
-  log "Stage 5: Split XL subset into pieces (may take 5 minutes)"
+  log "Stage 5: Split M subset into pieces (may take 5 minutes)"
   num_per_split=50
-  split_dir=data/fbank/gigaspeech_XL_split
+  split_dir=data/fbank/gigaspeech_M_split
   if [ ! -f $split_dir/.split_completed ]; then
-    lhotse split-lazy ./data/fbank/gigaspeech_cuts_XL_raw.jsonl.gz $split_dir $num_per_split
+    lhotse split-lazy ./data/fbank/gigaspeech_cuts_M_raw.jsonl.gz $split_dir $num_per_split
     touch $split_dir/.split_completed
   fi
 fi
 
 if [ $stage -le 6 ] && [ $stop_stage -ge 6 ]; then
-  log "Stage 6: Compute features for XL"
-  split_dir=data/fbank/gigaspeech_XL_split
-  num_splits=$(find $split_dir -name "gigaspeech_cuts_XL_raw.*.jsonl.gz" | wc -l)
+  log "Stage 6: Compute features for M"
+  split_dir=data/fbank/gigaspeech_M_split
+  num_splits=$(find $split_dir -name "gigaspeech_cuts_M_raw.*.jsonl.gz" | wc -l)
   python3 ./local/compute_fbank_gigaspeech_splits.py \
     --num-workers 20 \
     --batch-duration 600 \
@@ -213,7 +213,7 @@ if [ $stage -le 8 ] && [ $stop_stage -ge 8 ]; then
 
     if [ ! -f $lang_dir/transcript_words.txt ]; then
       log "Generate data for BPE training"
-      gunzip -c "data/manifests/gigaspeech_supervisions_XL.jsonl.gz" \
+      gunzip -c "data/manifests/gigaspeech_supervisions_M.jsonl.gz" \
         | jq '.text' \
         | sed 's/"//g' \
         > $lang_dir/transcript_words.txt

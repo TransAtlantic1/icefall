@@ -76,7 +76,7 @@ def get_args():
 
 def compute_fbank_gigaspeech_splits(args):
     num_splits = args.num_splits
-    output_dir = "data/fbank/gigaspeech_XL_split"
+    output_dir = "data/fbank/gigaspeech_M_split"
     output_dir = Path(output_dir)
     assert output_dir.exists(), f"{output_dir} does not exist!"
 
@@ -98,12 +98,12 @@ def compute_fbank_gigaspeech_splits(args):
         idx = f"{i}".zfill(num_digits)
         logging.info(f"Processing {idx}/{num_splits}")
 
-        cuts_path = output_dir / f"gigaspeech_cuts_XL.{idx}.jsonl.gz"
+        cuts_path = output_dir / f"gigaspeech_cuts_M.{idx}.jsonl.gz"
         if cuts_path.is_file():
             logging.info(f"{cuts_path} exists - skipping")
             continue
 
-        raw_cuts_path = output_dir / f"gigaspeech_cuts_XL_raw.{idx}.jsonl.gz"
+        raw_cuts_path = output_dir / f"gigaspeech_cuts_M_raw.{idx}.jsonl.gz"
         if not raw_cuts_path.is_file():
             logging.info(f"{raw_cuts_path} does not exist - skipping it")
             continue
@@ -112,14 +112,14 @@ def compute_fbank_gigaspeech_splits(args):
         cut_set = CutSet.from_file(raw_cuts_path)
 
         logging.info("Computing features")
-        filename = output_dir / f"gigaspeech_feats_XL_{idx}.lca"
+        filename = output_dir / f"gigaspeech_feats_M_{idx}.lca"
         if filename.exists():
             logging.info(f"Removing {filename}")
             os.remove(str(filename))
 
         cut_set = cut_set.compute_and_store_features_batch(
             extractor=extractor,
-            storage_path=f"{output_dir}/gigaspeech_feats_XL_{idx}",
+            storage_path=f"{output_dir}/gigaspeech_feats_M_{idx}",
             num_workers=args.num_workers,
             batch_duration=args.batch_duration,
             overwrite=True,

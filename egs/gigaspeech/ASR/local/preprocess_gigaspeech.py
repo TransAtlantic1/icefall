@@ -53,9 +53,9 @@ def preprocess_gigaspeech():
     dataset_parts = (
         "DEV",
         "TEST",
-        "XL",
+        "M",
+        # "XL",
         # "L",
-        # "M",
         # "S",
         # "XS",
     )

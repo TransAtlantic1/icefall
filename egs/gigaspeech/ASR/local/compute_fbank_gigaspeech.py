@@ -42,8 +42,8 @@ def compute_fbank_gigaspeech():
     subsets = (
         "DEV",
         "TEST",
+        "M",
         # "L",
-        # "M",
         # "S",
         # "XS",
     )

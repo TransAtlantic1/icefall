@@ -22,7 +22,13 @@ import os
 from pathlib import Path
 
 import torch
-from lhotse import CutSet, KaldifeatFbank, KaldifeatFbankConfig
+from lhotse import (
+    CutSet,
+    KaldifeatFbank,
+    KaldifeatFbankConfig,
+    load_manifest,
+    load_manifest_lazy,
+)
 
 # Torch's multithreaded behavior needs to be disabled or
 # it wastes a lot of CPU and slow things down.
@@ -30,6 +36,22 @@ from lhotse import CutSet, KaldifeatFbank, KaldifeatFbankConfig
 # even when we are not invoking the main (e.g. when spawning subprocesses).
 torch.set_num_threads(1)
 torch.set_num_interop_threads(1)
+
+
+def load_cutset(path: Path) -> CutSet:
+    cut_set = CutSet.from_file(path)
+    if cut_set is not None:
+        return cut_set
+
+    cut_set = load_manifest_lazy(path)
+    if cut_set is not None:
+        return cut_set
+
+    cut_set = load_manifest(path)
+    if cut_set is not None:
+        return cut_set
+
+    raise ValueError(f"Unable to load cut set from {path}")
 
 
 def get_args():
@@ -109,7 +131,7 @@ def compute_fbank_gigaspeech_splits(args):
             continue
 
         logging.info(f"Loading {raw_cuts_path}")
-        cut_set = CutSet.from_file(raw_cuts_path)
+        cut_set = load_cutset(raw_cuts_path)
 
         logging.info("Computing features")
         filename = output_dir / f"gigaspeech_feats_M_{idx}.lca"

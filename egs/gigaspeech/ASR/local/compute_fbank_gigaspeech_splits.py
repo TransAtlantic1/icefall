@@ -117,13 +117,16 @@ def compute_fbank_gigaspeech_splits(args):
             logging.info(f"Removing {filename}")
             os.remove(str(filename))
 
-        cut_set = cut_set.compute_and_store_features_batch(
+        computed = cut_set.compute_and_store_features_batch(
             extractor=extractor,
             storage_path=f"{output_dir}/gigaspeech_feats_M_{idx}",
             num_workers=args.num_workers,
             batch_duration=args.batch_duration,
             overwrite=True,
         )
+        # Recent lhotse versions may update cuts in place and return None.
+        if computed is not None:
+            cut_set = computed
 
         logging.info("About to split cuts into smaller chunks.")
         cut_set = cut_set.trim_to_supervisions(

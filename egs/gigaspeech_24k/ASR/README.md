@@ -36,7 +36,7 @@ ln -sfv /path/to/GigaSpeech download/GigaSpeech
 - `k2`
 - `sentencepiece`
 - `tensorboard`
-- 重新生成 BPE 资源时需要 `jq`
+- 重新生成 BPE 资源时优先使用 `jq`；缺失时会自动回退到 Python
 - 只有在使用 `--use-wandb True` 时才需要 `wandb`
 
 其中 `torchaudio` 是这个 recipe 的关键依赖，因为 `local/f5tts_mel_extractor.py`
@@ -46,6 +46,28 @@ ln -sfv /path/to/GigaSpeech download/GigaSpeech
 
 - [RUNBOOK.md](RUNBOOK.md)：一步一步的执行说明
 - [RESULTS.md](RESULTS.md)：本 recipe 的结果记录规范和模板
+
+## 独立训练入口
+
+这个目录现在提供了可单独起跑的离线训练脚本：
+
+```bash
+bash run_train_offline.sh
+```
+
+默认行为：
+
+- 默认使用 `CUDA_VISIBLE_DEVICES=0,1,2,3`
+- 默认把实验输出写到 `../experiments/gigaspeech_24k_train`
+- 默认启用 `WANDB_MODE=offline`
+- 启动前会检查 `wandb` 可用性，以及 `DEV` 特征是否真的是 `100` 维
+- 如果 `24k` 特征或 `lang_bpe_500` 还没准备好，脚本会直接失败，不会误起训练
+
+如果你要和别的训练并跑，再显式覆盖 GPU 和端口，例如：
+
+```bash
+CUDA_VISIBLE_DEVICES=4,5,6,7 MASTER_PORT=12364 bash run_train_offline.sh
+```
 
 ## 稳定运行建议
 
@@ -104,3 +126,4 @@ CUDA_VISIBLE_DEVICES='' bash prepare.sh \
 - 当前 24k recipe 的重点是统一 100 维特征契约，确保数据准备、训练、解码和导出入口能够消费同一套 24k 特征。
 - 如果要和 16k recipe 做并排对比，建议复用同一个 W&B project/group，并把两个实验目录放在同一个父目录下。
 - 目前默认的数据产物仍然写到本目录下的 `data/`，后续如果要迁移到共享存储或 `public` 目录，建议统一通过脚本参数或软链处理。
+- 如果需要把离线 W&B 记录回传到联网实例，可以执行 `bash sync_wandb_offline.sh`。

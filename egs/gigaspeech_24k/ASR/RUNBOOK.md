@@ -186,6 +186,27 @@ num_features = 100
 
 切换到 GPU 训练机后再执行这一步。
 
+如果 `24k` 特征还没有准备好，就先不要启动训练；本目录的 helper 会在缺少 `cuts_M` / `lang_bpe_500` 或特征维度不是 `100` 时直接退出。
+
+当 `24k` 数据准备完成后，可以把它当成一个独立训练直接启动：
+
+```bash
+bash run_train_offline.sh
+```
+
+这个脚本默认会：
+
+- 使用 `4` 张卡：`0,1,2,3`
+- 把实验写到 `../experiments/gigaspeech_24k_train`
+- 以 `WANDB_MODE=offline` 启动，并把离线记录写到 `${EXP_ROOT}/wandb_offline`
+- 在真正启动训练前检查 `wandb` 和 `100` 维特征契约
+
+如果你之后要和其他训练并跑，再显式覆盖 GPU 和端口：
+
+```bash
+CUDA_VISIBLE_DEVICES=4,5,6,7 MASTER_PORT=12364 bash run_train_offline.sh
+```
+
 多卡训练示例：
 
 ```bash
@@ -256,6 +277,7 @@ python zipformer/decode.py \
 - `${EXP_ROOT}/24k/modified_beam_search/wer-summary-dev-*.txt`
 - `${EXP_ROOT}/24k/modified_beam_search/wer-summary-test-*.txt`
 - `${EXP_ROOT}/24k/wandb_run_id.txt`，当启用 W&B 时会生成
+- `${EXP_ROOT}/wandb_offline/`，当以离线模式记录 W&B 时会生成
 
 ## 11. 备注
 
@@ -264,3 +286,4 @@ python zipformer/decode.py \
 - 在 CPU-only 机器上做预处理时，请使用 `--cpu-only true`。
 - 如果你正在和 `gigaspeech_16k` 做并行对比，建议使用同一个 W&B project/group，但把 `exp-dir` 分到不同子目录。
 - 如果要先做 smoke test，优先缩短 epoch 数、减小 `batch-duration` 或减少 `max-duration`。
+- 在可联网的实例上，可以通过 `bash sync_wandb_offline.sh` 把 `${EXP_ROOT}/wandb_offline` 里的离线 run 上传到 W&B。

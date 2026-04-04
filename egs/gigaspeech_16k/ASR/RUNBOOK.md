@@ -1,117 +1,122 @@
-# GigaSpeech 16k Runbook
+# GigaSpeech 16k 运行手册
 
-This runbook describes the full execution flow for the 16k Kaldi fbank baseline experiment.
+本文档说明 `egs/gigaspeech_16k/ASR` 这个 recipe 的推荐执行流程。
 
-Data preparation is assumed to run on a CPU-only instance.
-Training and decoding must run on a GPU instance.
+这个 recipe 是标准的 Kaldifeat fbank 流水线，加上 16 kHz 实验元信息和可选的 W&B 记录。
+它不在本目录中额外引入单独的离线重采样阶段。
 
-## 1. Environment Setup
+数据准备可以在 CPU-only 机器上完成。
+训练和解码建议在 GPU 机器上完成。
 
-Open a new shell and run:
+## 1. 进入目录
 
-```bash
-source /opt/conda/etc/profile.d/conda.sh
-conda activate icefall
-export PYTHONPATH=/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall:${PYTHONPATH}
-```
-
-If you want W&B tracking, use the same project and group as the 24k experiment:
+从 Icefall 仓库根目录进入：
 
 ```bash
-export WANDB_PROJECT=gigaspeech-f5tts-vs-fbank
-export WANDB_GROUP=gsm-compare-20260403
+cd egs/gigaspeech_16k/ASR
 ```
 
-Use the same shared experiment root as the 24k experiment:
+## 2. 环境准备
+
+激活你平时用于 Icefall 的环境。如果你的本地环境需要，也请确保仓库根目录已经加入 `PYTHONPATH`。
+
+如果要做统一跟踪，可以设置这些可选环境变量：
 
 ```bash
-export EXP_ROOT=/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gsm_compare_20260403
-mkdir -p ${EXP_ROOT}
+export WANDB_PROJECT=gigaspeech-compare
+export WANDB_GROUP=gigaspeech-16k-vs-24k
+export EXP_ROOT=/path/to/experiments/gigaspeech_compare
+mkdir -p "${EXP_ROOT}"
 ```
 
-## 2. Go To The Recipe Directory
+如果不使用 W&B，后面的命令里去掉 `--use-wandb` 相关参数即可。
 
-```bash
-cd /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/gigaspeech_16k/ASR
-```
+## 3. 可选：复用共享的 DEV/TEST 特征和 BPE
 
-## 3. Prepare Shared DEV/TEST Features And BPE
-
-If you already have a populated `egs/gigaspeech/ASR` workspace, you can reuse the
-shared DEV/TEST features and `lang_bpe_500`. Otherwise, skip this section and
-generate the assets locally via `prepare.sh`.
+如果你已经有一个准备好的 `egs/gigaspeech/ASR` 工作区，可以直接复用其中的 DEV/TEST 特征和 `lang_bpe_500`：
 
 ```bash
 export SOURCE_GIGASPEECH_ASR=/path/to/icefall/egs/gigaspeech/ASR
 
 mkdir -p data/fbank
 
-ln -sf ${SOURCE_GIGASPEECH_ASR}/data/fbank/gigaspeech_cuts_DEV.jsonl.gz data/fbank/
-ln -sf ${SOURCE_GIGASPEECH_ASR}/data/fbank/gigaspeech_feats_DEV.lca data/fbank/
+ln -sf "${SOURCE_GIGASPEECH_ASR}/data/fbank/gigaspeech_cuts_DEV.jsonl.gz" data/fbank/
+ln -sf "${SOURCE_GIGASPEECH_ASR}/data/fbank/gigaspeech_feats_DEV.lca" data/fbank/
 
-ln -sf ${SOURCE_GIGASPEECH_ASR}/data/fbank/gigaspeech_cuts_TEST.jsonl.gz data/fbank/
-ln -sf ${SOURCE_GIGASPEECH_ASR}/data/fbank/gigaspeech_feats_TEST.lca data/fbank/
+ln -sf "${SOURCE_GIGASPEECH_ASR}/data/fbank/gigaspeech_cuts_TEST.jsonl.gz" data/fbank/
+ln -sf "${SOURCE_GIGASPEECH_ASR}/data/fbank/gigaspeech_feats_TEST.lca" data/fbank/
 
-ln -sf ${SOURCE_GIGASPEECH_ASR}/data/lang_bpe_500 data/lang_bpe_500
+ln -sf "${SOURCE_GIGASPEECH_ASR}/data/lang_bpe_500" data/lang_bpe_500
 ```
 
-## 4. Optional Sanity Check
+如果这些资源还没有准备好，可以跳过这一步，后续在本地生成。
 
-On a CPU-only instance, do not run `train.py` or `decode.py --help`, because the
-GPU-enabled `k2` package will try to load CUDA driver libraries. Run those checks
-only on the GPU training instance.
+## 4. 准备 manifests
 
-## 5. Prepare GigaSpeech Manifests
-
-Generate manifests for `M`, `DEV`, and `TEST`:
+生成 `M`、`DEV` 和 `TEST` 的 manifests：
 
 ```bash
 bash prepare.sh --stage 1 --stop-stage 1 --cpu-only true
 ```
 
-## 6. Preprocess And Compute 16k Features
+## 5. 预处理并计算特征
 
-This recipe keeps the standard Kaldifeat fbank extractor. Since DEV and TEST may
-already be linked in `data/fbank/`, the actual work is mainly for `M`.
+该 recipe 保持标准的 Kaldifeat fbank 提取方式。
+如果第 3 步已经复用了 DEV 和 TEST 的特征，那么这一步实际主要是在处理子集 `M`。
 
-Recommended explicit execution:
+推荐显式执行：
 
 ```bash
 python local/preprocess_gigaspeech.py --cpu-only true
 touch data/fbank/.preprocess_complete
-python local/compute_fbank_gigaspeech.py --num-workers 32 --batch-duration 1000
+python local/compute_fbank_gigaspeech.py \
+  --num-workers 32 \
+  --batch-duration 1000
 ```
 
-Equivalent stage-based execution:
+等价的 stage 方式：
 
 ```bash
 bash prepare.sh --stage 3 --stop-stage 4 --cpu-only true
 ```
 
-## 7. Verify Feature Dimension
+## 6. 检查特征维度
 
-Check that the DEV features are 80-dimensional:
+确认预计算特征是 80 维：
 
 ```bash
 python - <<'PY'
 from lhotse import load_manifest_lazy
+
 cuts = load_manifest_lazy("data/fbank/gigaspeech_cuts_DEV.jsonl.gz")
 first = next(iter(cuts))
 print("num_features =", first.num_features)
 PY
 ```
 
-Expected output:
+预期输出：
 
 ```text
 num_features = 80
 ```
 
-## 8. Launch Training
+## 7. 训练 Zipformer
 
-Switch to a GPU training instance before running this step.
+多卡训练示例：
 
-Train on 8 GPUs with TensorBoard and W&B enabled:
+```bash
+python zipformer/train.py \
+  --world-size 8 \
+  --num-epochs 30 \
+  --use-fp16 1 \
+  --subset M \
+  --enable-musan False \
+  --max-duration 700 \
+  --tensorboard True \
+  --exp-dir "${EXP_ROOT}/16k"
+```
+
+带 W&B 的版本：
 
 ```bash
 python zipformer/train.py \
@@ -123,48 +128,54 @@ python zipformer/train.py \
   --max-duration 700 \
   --tensorboard True \
   --use-wandb True \
-  --wandb-project ${WANDB_PROJECT} \
-  --wandb-group ${WANDB_GROUP} \
+  --wandb-project "${WANDB_PROJECT}" \
+  --wandb-group "${WANDB_GROUP}" \
   --wandb-run-name gsm-m-16k-fbank \
   --wandb-tags gigaspeech,zipformer,subset-m,no-musan,16k,fbank-baseline \
-  --exp-dir ${EXP_ROOT}/16k
+  --exp-dir "${EXP_ROOT}/16k"
 ```
 
-## 9. Launch Decoding
+## 8. 解码
 
-Run decoding on the GPU training instance after training completes.
-
-After training completes, decode with checkpoint averaging and write the best DEV/TEST WER back to the same W&B run:
+解码示例：
 
 ```bash
 python zipformer/decode.py \
   --epoch 30 \
   --avg 15 \
-  --exp-dir ${EXP_ROOT}/16k \
+  --exp-dir "${EXP_ROOT}/16k" \
+  --max-duration 600 \
+  --decoding-method modified_beam_search
+```
+
+带 W&B 的版本：
+
+```bash
+python zipformer/decode.py \
+  --epoch 30 \
+  --avg 15 \
+  --exp-dir "${EXP_ROOT}/16k" \
   --max-duration 600 \
   --decoding-method modified_beam_search \
   --use-wandb True \
-  --wandb-project ${WANDB_PROJECT} \
-  --wandb-group ${WANDB_GROUP} \
+  --wandb-project "${WANDB_PROJECT}" \
+  --wandb-group "${WANDB_GROUP}" \
   --wandb-run-name gsm-m-16k-fbank \
   --wandb-tags gigaspeech,zipformer,subset-m,no-musan,16k,fbank-baseline
 ```
 
-## 10. Check Outputs
+## 9. 预期输出
 
-Important outputs:
+重要输出包括：
 
 - `${EXP_ROOT}/16k/tensorboard/`
 - `${EXP_ROOT}/16k/modified_beam_search/wer-summary-dev-*.txt`
 - `${EXP_ROOT}/16k/modified_beam_search/wer-summary-test-*.txt`
+- `${EXP_ROOT}/16k/wandb_run_id.txt`，当启用 W&B 时会生成
 
-## 11. Notes
+## 10. 备注
 
-- `stage 5-6` are not part of the main `M` experiment flow.
-- The training script defaults `--enable-musan` to `False`.
-- On CPU-only data prep instances, use `--cpu-only true` for `prepare.sh --stage 1/3` and `local/preprocess_gigaspeech.py`.
-- This recipe is a 16 kHz metadata/W&B variant of the standard GigaSpeech
-  Kaldifeat fbank baseline. It does not introduce a separate offline-resampling
-  stage in this directory.
-- The baseline can reuse shared DEV/TEST features and `lang_bpe_500`, but
-  computes `M` locally for a fair comparison.
+- `stage 5-6` 是可选的 split-based 特征计算辅助流程，不属于主 `M` 训练路径。
+- 训练 datamodule 默认把 `--enable-musan` 设为 `False`。
+- 在 CPU-only 机器上做预处理时，请使用 `--cpu-only true`。
+- 如果你的本地 `k2` 构建依赖 CUDA 库，避免在 CPU-only 机器上执行 `train.py` 或 `decode.py --help`。

@@ -1,39 +1,47 @@
-# GigaSpeech 16k
-GigaSpeech, an evolving, multi-domain English
-speech recognition corpus with 10,000 hours of high quality labeled
-audio, collected from audiobooks, podcasts
-and YouTube, covering both read and spontaneous speaking styles,
-and a variety of topics, such as arts, science, sports, etc. More details can be found: https://github.com/SpeechColab/GigaSpeech
+# GigaSpeech 16k ASR
 
-This recipe is a standard Kaldifeat fbank baseline derived from `egs/gigaspeech/ASR`
-with 16 kHz experiment metadata and optional W&B logging for train/decode tracking.
+这个目录是从 `egs/gigaspeech/ASR` 派生出来的 GigaSpeech ASR recipe。
+它的职责刻意收得比较窄，主要包括：
 
-## Download
+- 标准 Kaldifeat fbank 特征提取
+- 用于对比和跟踪的 16 kHz 实验元信息
+- 训练和解码阶段的可选 W&B 记录
+- 对 CPU-only 数据准备更友好的入口
+- 主 Zipformer 路径默认关闭 MUSAN
 
-Apply for the download credentials and download the dataset by following https://github.com/SpeechColab/GigaSpeech#download. Then create a symlink
+这个目录本身不引入单独的离线重采样流水线。
+
+## 数据集
+
+该 recipe 面向 GigaSpeech 英文 ASR 数据集：
+<https://github.com/SpeechColab/GigaSpeech>
+
+如果 `download/GigaSpeech` 还没有准备好，请先申请访问权限，再建立预期的符号链接：
+
 ```bash
 ln -sfv /path/to/GigaSpeech download/GigaSpeech
 ```
 
-## Environment
+## 依赖
 
-This baseline recipe depends on:
+该 recipe 依赖常规的 Icefall ASR 环境：
 
-- `torch` and `torchaudio`
+- `torch`
+- `torchaudio`
 - `lhotse`
 - `k2`
 - `sentencepiece`
 - `tensorboard`
-- `wandb` when using `--use-wandb True`
-- `jq` when regenerating BPE assets
+- 重新生成 BPE 资源时需要 `jq`
+- 只有在使用 `--use-wandb True` 时才需要 `wandb`
 
-For unified experiment tracking, run both the 16k and 24k recipes with the same W&B `--wandb-project` and `--wandb-group`, and place both `--exp-dir` values under the same parent directory for TensorBoard comparison.
+## 建议继续阅读
 
-## Performance Record
-|                                |  Dev  | Test  |
-|--------------------------------|-------|-------|
-|           `zipformer`          | 10.25 | 10.38 |
-|         `conformer_ctc`        | 10.47 | 10.58 |
-| `pruned_transducer_stateless2` | 10.40 | 10.51 |
+- [RUNBOOK.md](RUNBOOK.md)：一步一步的执行说明
+- [RESULTS.md](RESULTS.md)：本 recipe 的结果记录规范和模板
 
-See [RESULTS](RESULTS.md) for details.
+## 说明
+
+- 这个目录里的主路径是基于子集 `M` 的 `zipformer` recipe。
+- 该 recipe 可以复用另一个 GigaSpeech 工作区中的 DEV/TEST 特征和 `lang_bpe_500`，也可以在本地自行生成所需资源。
+- 如果要和 24k recipe 做并排对比，建议复用同一个 W&B project/group，并把两个实验目录放在同一个父目录下。

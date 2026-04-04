@@ -1,226 +1,77 @@
-## Results
-### zipformer (zipformer + pruned stateless transducer)
+# 结果记录
 
-See <https://github.com/k2-fsa/icefall/pull/1254> for more details.
+这个文件只用于记录 `egs/gigaspeech_24k/ASR` 目录下实际跑出来的结果。
 
-[zipformer](./zipformer)
+不要把 `egs/gigaspeech/ASR` 或 `egs/gigaspeech_16k/ASR` 的历史结果直接当作本目录结果拷贝进来。
 
-- Non-streaming
-- normal-scaled model, number of model parameters: 65549011, i.e., 65.55 M
+## 当前状态
 
-You can find a pretrained model, training logs, decoding logs, and decoding results at:
-<https://huggingface.co/yfyeung/icefall-asr-gigaspeech-zipformer-2023-10-17>
+目前这个目录已经定义好了 24 kHz F5-TTS log-mel recipe、运行流程和 100 维特征契约，但这里还没有补齐一套经过统一确认的本目录实验结果。
 
-The tensorboard log for training is available at
-<https://wandb.ai/yifanyeung/icefall-asr-gigaspeech-zipformer-2023-10-20>
+在真正把实验结果写进来之前，请把其他目录里的数字只当成参考材料，不要当成这个目录已经验证过的输出。
 
-You can use <https://github.com/k2-fsa/sherpa> to deploy it.
+## 这里应该记录什么
 
-| decoding method      | test-clean | test-other | comment            |
-|----------------------|------------|------------|--------------------|
-| greedy_search        | 10.31      | 10.50      | --epoch 30 --avg 9 |
-| modified_beam_search | 10.25      | 10.38      | --epoch 30 --avg 9 |
-| fast_beam_search     | 10.26      | 10.48      | --epoch 30 --avg 9 |
+建议每次实验至少记录以下内容：
 
-The training command is:
+- 模型类型，例如 `zipformer`
+- 训练子集，例如 `M`
+- 特征类型，例如 `24k F5-TTS log-mel`
+- 特征维度，例如 `100`
+- 是否启用 MUSAN
+- 训练命令
+- 解码命令
+- checkpoint 选择方式，例如 `--epoch 30 --avg 15`
+- 最终 `dev` 和 `test` WER
+- 可选的 W&B 链接或实验目录
+
+## 建议模板
+
+````markdown
+### zipformer
+
+- 日期：
+- 训练子集：
+- 特征类型：24k F5-TTS log-mel
+- 特征维度：100
+- MUSAN：
+- 实验目录：
+- W&B：
+
+| 解码方式 | dev | test | 备注 |
+|----------|-----|------|------|
+| modified_beam_search |     |      |      |
+
+训练命令：
 ```bash
-export CUDA_VISIBLE_DEVICES="0,1,2,3"
-./zipformer/train.py \
-  --world-size 4 \
-  --num-epochs 30 \
-  --start-epoch 1 \
-  --use-fp16 1 \
-  --exp-dir zipformer/exp \
-  --causal 0 \
-  --subset XL \
-  --max-duration 700 \
-  --use-transducer 1 \
-  --use-ctc 0 \
-  --lr-epochs 1 \
-  --master-port 12345
+python zipformer/train.py \
+  ...
 ```
 
-The decoding command is:
+解码命令：
 ```bash
-export CUDA_VISIBLE_DEVICES=0
-
-# greedy search
-./zipformer/decode.py \
-  --epoch 30 \
-  --avg 9 \
-  --exp-dir ./zipformer/exp \
-  --max-duration 1000 \
-  --decoding-method greedy_search
-
-# modified beam search
-./zipformer/decode.py \
-  --epoch 30 \
-  --avg 9 \
-  --exp-dir ./zipformer/exp \
-  --max-duration 1000 \
-  --decoding-method modified_beam_search \
-  --beam-size 4
-
-# fast beam search (one best)
-./zipformer/decode.py \
-  --epoch 30 \
-  --avg 9 \
-  --exp-dir ./zipformer/exp \
-  --max-duration 1000 \
-  --decoding-method fast_beam_search \
-  --beam 20.0 \
-  --max-contexts 8 \
-  --max-states 64
+python zipformer/decode.py \
+  ...
 ```
+````
 
-### GigaSpeech BPE training results (Pruned Transducer 2)
+## 建议记录方式
 
-#### 2022-05-12
+- 如果一次实验只调整了前端或训练参数中的一项，也请把完整命令和实验目录一起写下来。
+- 如果训练和解码都启用了 W&B，建议把同一个 run 或 group 一并记录下来，方便和 `gigaspeech_16k` 做并排比较。
+- 如果当前结果只验证了 `zipformer`，请不要把 `conformer_ctc` 或 `pruned_transducer_stateless2` 的旧数字直接补到这里。
 
-#### Conformer encoder + embedding decoder
+## 参考说明
 
-Conformer encoder + non-recurrent decoder. The encoder is a
-reworked version of the conformer encoder, with many changes. The
-decoder contains only an embedding layer, a Conv1d (with kernel
-size 2) and a linear layer (to transform tensor dim). k2 pruned
-RNN-T loss is used.
+这个 recipe 本质上是 GigaSpeech 24 kHz 特征对比实验目录，重点在于：
 
-The best WER, as of 2022-05-12, for the gigaspeech is below
+- 16 kHz 音频离线重采样到 24 kHz
+- 使用 100 维 F5-TTS 风格 log-mel 特征
+- 统一训练、解码、导出入口对这套特征的消费方式
 
-Results are:
+如果你需要查看上游 baseline 或 16k 对照实验，可以参考：
 
-|                      |  Dev  | Test  |
-|----------------------|-------|-------|
-|    greedy search     | 10.51 | 10.73 |
-|   fast beam search   | 10.50 | 10.69 |
-| modified beam search | 10.40 | 10.51 |
+- `egs/gigaspeech/ASR/RESULTS.md`
+- `egs/gigaspeech_16k/ASR/RESULTS.md`
 
-To reproduce the above result, use the following commands for training:
-
-```bash
-cd egs/gigaspeech/ASR
-./prepare.sh
-export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
-./pruned_transducer_stateless2/train.py \
-  --max-duration 120 \
-  --num-workers 1 \
-  --world-size 8 \
-  --exp-dir pruned_transducer_stateless2/exp \
-  --bpe-model data/lang_bpe_500/bpe.model \
-  --use-fp16 True
-```
-
-and the following commands for decoding:
-
-```bash
-# greedy search
-./pruned_transducer_stateless2/decode.py \
-  --iter 3488000 \
-  --avg 20 \
-  --decoding-method greedy_search \
-  --exp-dir pruned_transducer_stateless2/exp \
-  --bpe-model data/lang_bpe_500/bpe.model \
-  --max-duration 600
-
-# fast beam search
-./pruned_transducer_stateless2/decode.py \
-  --iter 3488000 \
-  --avg 20 \
-  --decoding-method fast_beam_search \
-  --exp-dir pruned_transducer_stateless2/exp \
-  --bpe-model data/lang_bpe_500/bpe.model \
-  --max-duration 600
-
-# modified beam search
-./pruned_transducer_stateless2/decode.py \
-  --iter 3488000 \
-  --avg 15 \
-  --decoding-method modified_beam_search \
-  --exp-dir pruned_transducer_stateless2/exp \
-  --bpe-model data/lang_bpe_500/bpe.model \
-  --max-duration 600
-```
-
-Pretrained model is available at
-<https://huggingface.co/wgb14/icefall-asr-gigaspeech-pruned-transducer-stateless2>
-
-The tensorboard log for training is available at
-<https://tensorboard.dev/experiment/zmmM0MLASnG1N2RmJ4MZBw/>
-
-### GigaSpeech BPE training results (Conformer-CTC)
-
-#### 2022-04-06
-
-The best WER, as of 2022-04-06, for the gigaspeech is below
-
-Results using HLG decoding + n-gram LM rescoring + attention decoder rescoring:
-
-|     |  Dev  | Test  |
-|-----|-------|-------|
-| WER | 10.47 | 10.58 |
-
-Scale values used in n-gram LM rescoring and attention rescoring for the best WERs are:
-| ngram_lm_scale | attention_scale |
-|----------------|-----------------|
-|      0.5       |       1.3       |
-
-
-To reproduce the above result, use the following commands for training:
-
-```bash
-cd egs/gigaspeech/ASR
-./prepare.sh
-export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
-./conformer_ctc/train.py \
-  --max-duration 120 \
-  --num-workers 1 \
-  --world-size 8 \
-  --exp-dir conformer_ctc/exp_500 \
-  --lang-dir data/lang_bpe_500
-```
-
-and the following command for decoding:
-
-```bash
-./conformer_ctc/decode.py \
-  --epoch 18 \
-  --avg 6 \
-  --method attention-decoder \
-  --num-paths 1000 \
-  --exp-dir conformer_ctc/exp_500 \
-  --lang-dir data/lang_bpe_500 \
-  --max-duration 20 \
-  --num-workers 1
-```
-
-Results using HLG decoding + whole lattice rescoring:
-
-|     |  Dev  | Test  |
-|-----|-------|-------|
-| WER | 10.51 | 10.62 |
-
-Scale values used in n-gram LM rescoring and attention rescoring for the best WERs are:
-| lm_scale |
-|----------|
-|   0.2    |
-
-To reproduce the above result, use the training commands above, and the following command for decoding:
-
-```bash
-./conformer_ctc/decode.py \
-  --epoch 18 \
-  --avg 6 \
-  --method whole-lattice-rescoring \
-  --num-paths 1000 \
-  --exp-dir conformer_ctc/exp_500 \
-  --lang-dir data/lang_bpe_500 \
-  --max-duration 20 \
-  --num-workers 1
-```
-Note: the `whole-lattice-rescoring` method is about twice as fast as the `attention-decoder` method, with slightly worse WER.
-
-Pretrained model is available at
-<https://huggingface.co/wgb14/icefall-asr-gigaspeech-conformer-ctc>
-
-The tensorboard log for training is available at
-<https://tensorboard.dev/experiment/rz63cmJXSK2fV9GceJtZXQ/>
+除非这些结果在本目录下重新跑过，或者已经明确验证过适用于本目录，否则不要直接复制到这里。

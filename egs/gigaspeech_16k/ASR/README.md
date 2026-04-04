@@ -40,6 +40,31 @@ ln -sfv /path/to/GigaSpeech download/GigaSpeech
 - [RUNBOOK.md](RUNBOOK.md)：一步一步的执行说明
 - [RESULTS.md](RESULTS.md)：本 recipe 的结果记录规范和模板
 
+## 稳定运行建议
+
+`16k` recipe 的 stage 4 已经有一组成功跑完 `M` 子集的经验参数：
+
+```bash
+bash prepare.sh \
+  --stage 4 \
+  --stop-stage 4 \
+  --cpu-only true \
+  --stage4-num-workers 0 \
+  --stage4-batch-duration 500
+```
+
+这次成功运行后的关键产物规模大致是：
+
+- `data/fbank/gigaspeech_feats_M.lca` 约 `111G`
+- `data/fbank/gigaspeech_cuts_M.jsonl.gz` 约 `2.1G`
+
+实践建议：
+
+- `16k` 的 `batch-duration 500` 已经验证可用，可以作为优先推荐值。
+- `num-workers 0` 是这次成功经验的重要组成部分；它能减少 DataLoader 预取带来的额外内存和 `/dev/shm` 波动。
+- 启动前仍然建议检查 `free -h`、`df -h /dev/shm`、`/sys/fs/cgroup/memory.max` 和 `/sys/fs/cgroup/memory.events`。
+- 不建议把 `16k stage 4` 和更重的 `24k stage 4` 在同一个受限 cgroup 里并跑。
+
 ## 说明
 
 - 这个目录里的主路径是基于子集 `M` 的 `zipformer` recipe。

@@ -64,20 +64,58 @@ bash prepare.sh --stage 1 --stop-stage 1 --cpu-only true
 该 recipe 保持标准的 Kaldifeat fbank 提取方式。
 如果第 3 步已经复用了 DEV 和 TEST 的特征，那么这一步实际主要是在处理子集 `M`。
 
+如果你是在共享实例上做这一步，建议也一起确认宿主机内存、`/dev/shm` 和 cgroup 上限：
+
+```bash
+free -h
+df -h /dev/shm
+cat /sys/fs/cgroup/memory.max
+cat /sys/fs/cgroup/memory.current
+cat /sys/fs/cgroup/memory.events
+```
+
+本 recipe 已验证成功的一组 `M` 子集配置是：
+
+- `--stage4-num-workers 0`
+- `--stage4-batch-duration 500`
+
+这次成功运行后的关键产物是：
+
+- `data/fbank/gigaspeech_feats_M.lca` 约 `111G`
+- `data/fbank/gigaspeech_cuts_M.jsonl.gz` 约 `2.1G`
+
+这组参数适合：
+
+- 单独跑 `16k stage 4`
+- 宿主机和 cgroup 仍有明显内存余量
+- 你更关心稳定完成 `M`，而不是把音频读取并发开得很高
+
+参数设计原则：
+
+- 对 `16k` 来说，`batch-duration 500` 已经验证可用，不必保守回退到更小值。
+- `num-workers 0` 是这次成功经验的重要部分；它减少了 DataLoader 预取和共享内存波动。
+- 如果未来要提速，先尝试把 `num-workers` 提到 `2`，而不是继续把 `batch-duration` 提高到 `1000`。
+- 不建议让 `16k stage 4` 和 `24k stage 4` 在同一个受限 cgroup 中并跑。
+
 推荐显式执行：
 
 ```bash
 python local/preprocess_gigaspeech.py --cpu-only true
 touch data/fbank/.preprocess_complete
 python local/compute_fbank_gigaspeech.py \
-  --num-workers 32 \
-  --batch-duration 1000
+  --num-workers 0 \
+  --batch-duration 500
 ```
 
 等价的 stage 方式：
 
 ```bash
-bash prepare.sh --stage 3 --stop-stage 4 --cpu-only true
+bash prepare.sh \
+  --stage 3 \
+  --stop-stage 4 \
+  --cpu-only true \
+  --stage4-num-workers 0 \
+  --stage4-batch-duration 500
 ```
 
 ## 6. 检查特征维度

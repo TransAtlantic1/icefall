@@ -112,9 +112,9 @@ LRSchedulerType = Union[torch.optim.lr_scheduler._LRScheduler, optim.LRScheduler
 
 WANDB_RUN_ID_FILENAME = "wandb_run_id.txt"
 WANDB_RECIPE_CONFIG = {
-    "recipe": "emilia",
-    "feature_type": "kaldifeat_fbank",
-    "feature_sample_rate": 32000,
+    "recipe": "emilia_24k",
+    "feature_type": "f5tts_mel",
+    "feature_sample_rate": 24000,
 }
 
 
@@ -127,7 +127,7 @@ def get_language_defaults(language: str) -> Dict[str, Path]:
         "lang_dir": lang_dir,
         "bpe_model": lang_dir / "bpe.model",
         "tokens": lang_dir / "tokens.txt",
-        "exp_dir": Path(f"zipformer/exp-{language}"),
+        "exp_dir": Path(f"zipformer/exp-{language}-24k"),
     }
 
 
@@ -732,7 +732,7 @@ def get_params() -> AttributeDict:
             "reset_interval": 2000,
             "valid_interval": 20000,
             # parameters for zipformer
-            "feature_dim": 80,
+            "feature_dim": 100,
             "subsampling_factor": 4,  # not passed in, this is fixed.
             "warm_step": 2000,
             "env_info": get_env_info(),

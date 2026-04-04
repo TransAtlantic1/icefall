@@ -6,14 +6,9 @@ import os
 from pathlib import Path
 
 import torch
-from lhotse import (
-    CutSet,
-    KaldifeatFbank,
-    KaldifeatFbankConfig,
-    load_manifest,
-    load_manifest_lazy,
-)
-from lhotse.features.kaldifeat import KaldifeatFrameOptions
+from lhotse import CutSet, load_manifest, load_manifest_lazy
+
+from f5tts_mel_extractor import F5TTSMelConfig, F5TTSMelExtractor
 
 
 torch.set_num_threads(1)
@@ -49,10 +44,10 @@ def get_args():
     parser.add_argument(
         "--sampling-rate",
         type=int,
-        default=32000,
+        default=24000,
         help=(
-            "Expected sampling rate of the input audio. Audio is assumed to already "
-            "be cached at this target sample rate."
+            "Sampling rate of the input audio. When it differs from 24k, "
+            "the F5-TTS mel extractor will resample internally."
         ),
     )
     return parser.parse_args()
@@ -67,14 +62,11 @@ def main():
     device = torch.device("cuda", 0) if torch.cuda.is_available() else torch.device(
         "cpu"
     )
-    extractor = KaldifeatFbank(
-        KaldifeatFbankConfig(
-            device=device,
-            frame_opts=KaldifeatFrameOptions(sampling_rate=args.sampling_rate),
-        )
+    extractor = F5TTSMelExtractor(
+        F5TTSMelConfig(target_sample_rate=24000, n_mels=100, device=str(device))
     )
     logging.info(
-        "device: %s, sampling_rate: %d (assuming offline-resampled audio)",
+        "device: %s, input_sampling_rate: %d, target_sampling_rate: 24000",
         device,
         args.sampling_rate,
     )

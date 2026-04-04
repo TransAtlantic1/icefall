@@ -32,7 +32,7 @@ feature_stop=""
 feature_num_workers=""
 feature_batch_duration=""
 
-target_sample_rate=32000
+target_sample_rate=24000
 use_resampled_audio=true
 speed_perturb=true
 enable_musan=false

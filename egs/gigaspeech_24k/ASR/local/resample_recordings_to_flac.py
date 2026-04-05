@@ -71,6 +71,25 @@ def build_cache_path(
 def cached_audio_info(path: Path) -> Optional[Tuple[int, int]]:
     if not path.is_file():
         return None
+    if path.suffix.lower() == ".flac":
+        try:
+            sample_rate = subprocess.check_output(
+                ["soxi", "-r", str(path)],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+            num_frames = subprocess.check_output(
+                ["soxi", "-s", str(path)],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+            sample_rate = int(sample_rate)
+            num_frames = int(num_frames)
+            if sample_rate <= 0 or num_frames <= 0:
+                return None
+            return sample_rate, num_frames
+        except Exception:
+            return None
     try:
         info = torchaudio.info(str(path))
     except Exception:

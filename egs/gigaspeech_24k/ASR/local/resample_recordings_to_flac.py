@@ -165,6 +165,16 @@ def process_recording(job):
         return "error", recording.id, str(exc)
 
 
+def handle_result(result, writer):
+    status = result[0]
+    if status in ("ok", "skipped"):
+        writer.write(result[1])
+        return status, None
+
+    _, recording_id, error = result
+    return status, (recording_id, error)
+
+
 def main():
     args = get_args()
     args.output_manifest.parent.mkdir(parents=True, exist_ok=True)
@@ -175,7 +185,7 @@ def main():
 
     recordings = load_recordings(args.input_manifest)
 
-    num_workers = max(1, args.num_workers)
+    num_workers = args.num_workers
     total = 0
     written = 0
     skipped = 0
@@ -197,21 +207,28 @@ def main():
         args.output_manifest.unlink()
 
     with RecordingSet.open_writer(args.output_manifest) as writer:
-        with ProcessPoolExecutor(max_workers=num_workers) as ex:
-            for result in ex.map(process_recording, jobs, chunksize=8):
+        if num_workers <= 1:
+            logging.info(
+                "Running resampling in the main process because num_workers=%s",
+                num_workers,
+            )
+            result_iter = map(process_recording, jobs)
+        else:
+            executor = ProcessPoolExecutor(max_workers=num_workers)
+            result_iter = executor.map(process_recording, jobs, chunksize=8)
+
+        try:
+            for result in result_iter:
                 total += 1
-                status = result[0]
+                status, error_info = handle_result(result, writer)
                 if status in ("ok", "skipped"):
-                    writer.write(result[1])
                     written += 1
                     if status == "skipped":
                         skipped += 1
                 else:
                     failed += 1
-                    _, recording_id, error = result
-                    logging.warning(
-                        "Failed to resample %s: %s", recording_id, error
-                    )
+                    recording_id, error = error_info
+                    logging.warning("Failed to resample %s: %s", recording_id, error)
 
                 if total % 100 == 0:
                     logging.info(
@@ -221,6 +238,9 @@ def main():
                         skipped,
                         failed,
                     )
+        finally:
+            if num_workers > 1:
+                executor.shutdown(wait=True)
 
     logging.info(
         "Finished resampling %s: total=%s, written=%s, skipped=%s, failed=%s",

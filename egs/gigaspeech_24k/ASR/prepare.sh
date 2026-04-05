@@ -21,7 +21,7 @@ cpu_only=false
 stage4_num_workers=32
 stage4_batch_duration=1000
 
-recording_num_splits=1000
+recording_num_splits=100
 resample_start=0
 resample_stop=-1
 resample_num_workers=32

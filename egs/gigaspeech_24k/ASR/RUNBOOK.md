@@ -54,7 +54,7 @@ export WANDB_GROUP=zipformer-m
 重要默认参数：
 - `stage=1`
 - `stop_stage=6`
-- `recording_num_splits=1000`
+- `recording_num_splits=100`
 - `resample_num_workers=32`
 - `target_sample_rate=24000`
 - `use_resampled_audio=true`
@@ -129,7 +129,7 @@ bash prepare.sh \
 默认产物路径：
 - `data/manifests_resampled/24000/gigaspeech_recordings_DEV.jsonl.gz`
 - `data/manifests_resampled/24000/gigaspeech_recordings_TEST.jsonl.gz`
-- `data/manifests_resampled/24000/recordings_M_split_1000/`
+- `data/manifests_resampled/24000/recordings_M_split_100/`
 - `data/audio_cache/gigaspeech/24000/`
 
 ### 5.3 Stage 4：多实例 CPU 分片跑法
@@ -145,11 +145,11 @@ bash prepare.sh \
 ./run_resample_shard.sh --instance-index 3
 ```
 
-在 `recording_num_splits=1000`、`num_instances=4` 时，区间是：
-- worker 0：`[0, 250)`
-- worker 1：`[250, 500)`
-- worker 2：`[500, 750)`
-- worker 3：`[750, 1000)`
+在 `recording_num_splits=100`、`num_instances=4` 时，区间是：
+- worker 0：`[0, 25)`
+- worker 1：`[25, 50)`
+- worker 2：`[50, 75)`
+- worker 3：`[75, 100)`
 
 只有 worker 0 会顺带处理 `DEV/TEST` 的重采样。
 
@@ -365,3 +365,4 @@ num_features = 100
 - `stage 7-8` 只是可选的 split-based `M` 特征链路，不是主训练路径的硬前置
 - `use_resampled_audio=true` 时，`stage 5` 会读取 `stage 4` 生成的 24 kHz recordings manifests
 - datamodule 默认把 `--enable-musan` 设为 `False`
+

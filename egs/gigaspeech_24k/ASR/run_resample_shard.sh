@@ -8,7 +8,7 @@ PARSE_OPTIONS_SH="${ICEFALL_ROOT}/icefall/shared/parse_options.sh"
 
 instance_index=0
 num_instances=4
-recording_num_splits=1000
+recording_num_splits=100
 resample_num_workers=24
 target_sample_rate=24000
 log_root=""

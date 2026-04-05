@@ -327,8 +327,7 @@ if [ $stage -le 8 ] && [ $stop_stage -ge 8 ]; then
     --batch-duration "${feature_batch_duration}" \
     --num-splits "$num_feature_splits" \
     --start "$feature_start" \
-    --stop "$feature_stop" \
-    --overwrite true
+    --stop "$feature_stop"
 fi
 
 if [ $stage -le 9 ] && [ $stop_stage -ge 9 ]; then

@@ -177,6 +177,18 @@ bash prepare.sh \
   --feature-batch-duration 200
 ```
 
+单机后台跑法：
+
+```bash
+CUDA_VISIBLE_DEVICES='' nohup bash prepare.sh \
+  --stage 5 \
+  --stop-stage 6 \
+  --cpu-only true \
+  --feature-num-workers 4 \
+  --feature-batch-duration 200 \
+  > stage6_feature.log 2>&1 &
+```
+
 如果你想拆开执行：
 
 ```bash
@@ -216,7 +228,7 @@ bash prepare.sh \
   --stage 7 \
   --stop-stage 7 \
   --cpu-only true \
-  --feature-num-splits 100
+  --feature-num-splits 20
 ```
 
 ### 6.3 Stage 8：按分片重算 M 特征
@@ -229,14 +241,50 @@ bash prepare.sh \
   --stage 8 \
   --stop-stage 8 \
   --cpu-only true \
-  --feature-num-splits 100 \
+  --feature-num-splits 20 \
   --feature-start 0 \
-  --feature-stop 25 \
+  --feature-stop 5 \
   --feature-num-workers 4 \
   --feature-batch-duration 200
 ```
 
 这里的 `feature-start/feature-stop` 是左闭右开区间，用来控制当前 worker 实际处理哪些 split。
+
+单机后台跑法：
+
+```bash
+CUDA_VISIBLE_DEVICES='' nohup bash prepare.sh \
+  --stage 8 \
+  --stop-stage 8 \
+  --cpu-only true \
+  --feature-num-splits 20 \
+  --feature-start 0 \
+  --feature-stop 20 \
+  --feature-num-workers 4 \
+  --feature-batch-duration 200 \
+  > stage8_split_feature.log 2>&1 &
+```
+
+更稳的单机顺序分批跑法，每次跑 5 片：
+
+```bash
+CUDA_VISIBLE_DEVICES='' nohup bash prepare.sh \
+  --stage 8 \
+  --stop-stage 8 \
+  --cpu-only true \
+  --feature-num-splits 20 \
+  --feature-start 0 \
+  --feature-stop 5 \
+  --feature-num-workers 4 \
+  --feature-batch-duration 200 \
+  > stage8_split_0_5.log 2>&1 &
+```
+
+`stage 8` 现在默认会自动跳过已经完成的 split：
+
+- 如果某个 `gigaspeech_cuts_M.<idx>.jsonl.gz` 已存在，就不会重算这一片
+- 所以同一个区间可以安全重跑，用来做断点续传
+- 想强制重算某一段时，再单独调用 `local/compute_fbank_gigaspeech_splits.py --overwrite true`
 
 ## 7. Stage 9-11：MUSAN、BPE、phone
 
@@ -365,4 +413,3 @@ num_features = 100
 - `stage 7-8` 只是可选的 split-based `M` 特征链路，不是主训练路径的硬前置
 - `use_resampled_audio=true` 时，`stage 5` 会读取 `stage 4` 生成的 24 kHz recordings manifests
 - datamodule 默认把 `--enable-musan` 设为 `False`
-

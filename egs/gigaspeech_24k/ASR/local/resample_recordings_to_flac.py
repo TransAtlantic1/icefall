@@ -3,6 +3,7 @@
 import argparse
 import logging
 import os
+import subprocess
 import uuid
 from concurrent.futures import ProcessPoolExecutor
 from functools import lru_cache
@@ -12,6 +13,15 @@ from typing import Iterable, Optional, Tuple
 import torchaudio
 from lhotse import AudioSource, Recording, RecordingSet
 from lhotse.serialization import load_manifest_lazy_or_eager
+
+FFMPEG_FALLBACK_RECORDING_IDS = {
+    # This audiobook is ~3 hours long. On this host, the torchaudio.load() path
+    # can trigger a native crash / OOM-like failure before Python gets a normal
+    # exception, which then shows up as BrokenProcessPool or SIGFPE in stage 4.
+    # Keep the workaround narrow: only this known problematic recording uses a
+    # streamed ffmpeg transcode; all other recordings preserve the existing path.
+    "AUD0000000444",
+}
 
 
 def get_args():
@@ -100,6 +110,66 @@ def get_resampler(orig_freq: int, new_freq: int):
     return torchaudio.transforms.Resample(orig_freq=orig_freq, new_freq=new_freq)
 
 
+def transcode_with_ffmpeg(
+    source_path: str,
+    target_path: Path,
+    target_sample_rate: int,
+    codec: str,
+) -> int:
+    if codec != "flac":
+        raise ValueError(f"Unsupported codec for ffmpeg fallback: {codec}")
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = target_path.with_name(
+        f".{target_path.stem}.{os.getpid()}.{uuid.uuid4().hex}.{codec}"
+    )
+
+    cmd = [
+        "ffmpeg",
+        "-v",
+        "error",
+        "-nostdin",
+        "-threads",
+        "1",
+        "-i",
+        source_path,
+        "-ar",
+        str(target_sample_rate),
+        "-c:a",
+        "flac",
+        "-compression_level",
+        "5",
+        "-y",
+        str(tmp_path),
+    ]
+
+    try:
+        completed = subprocess.run(
+            cmd,
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(completed.stderr.strip() or "ffmpeg exited non-zero")
+
+        info = cached_audio_info(tmp_path)
+        if info is None:
+            raise RuntimeError(f"Unable to inspect ffmpeg output: {tmp_path}")
+        if info[0] != target_sample_rate:
+            raise RuntimeError(
+                f"Expected sample_rate={target_sample_rate}, got {info[0]} from {tmp_path}"
+            )
+
+        os.replace(tmp_path, target_path)
+        return info[1]
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
+
+
 def process_recording(job):
     recording, source_root, cache_root, target_sample_rate, codec, overwrite = job
     source = recording.sources[0]
@@ -130,23 +200,37 @@ def process_recording(job):
         )
 
     try:
-        waveform, sample_rate = torchaudio.load(source_path)
-        if sample_rate != target_sample_rate:
-            waveform = get_resampler(sample_rate, target_sample_rate)(waveform)
+        if recording.id in FFMPEG_FALLBACK_RECORDING_IDS:
+            logging.info(
+                "Using ffmpeg streaming fallback for very long recording %s",
+                recording.id,
+            )
+            num_frames = transcode_with_ffmpeg(
+                source_path=source_path,
+                target_path=target_path,
+                target_sample_rate=target_sample_rate,
+                codec=codec,
+            )
+        else:
+            waveform, sample_rate = torchaudio.load(source_path)
+            if sample_rate != target_sample_rate:
+                waveform = get_resampler(sample_rate, target_sample_rate)(waveform)
 
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = target_path.with_name(
-            f".{target_path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
-        )
-        torchaudio.save(str(tmp_path), waveform, target_sample_rate, format=codec)
-        os.replace(tmp_path, target_path)
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = target_path.with_name(
+                f".{target_path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+            )
+            torchaudio.save(str(tmp_path), waveform, target_sample_rate, format=codec)
+            os.replace(tmp_path, target_path)
+            num_frames = waveform.shape[1]
+
         return (
             "ok",
             build_resampled_recording(
                 recording=recording,
                 cached_path=target_path,
                 target_sample_rate=target_sample_rate,
-                num_frames=waveform.shape[1],
+                num_frames=num_frames,
             ),
         )
     except Exception as exc:

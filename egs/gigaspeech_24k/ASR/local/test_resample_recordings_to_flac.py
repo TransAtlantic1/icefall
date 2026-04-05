@@ -7,7 +7,7 @@ import torch
 import torchaudio
 from lhotse import AudioSource, Recording
 
-from resample_recordings_to_flac import process_recording
+from resample_recordings_to_flac import build_cache_path, process_recording
 
 
 def test_process_recording_resamples_audio_and_rewrites_manifest_entry():
@@ -48,6 +48,34 @@ def test_process_recording_resamples_audio_and_rewrites_manifest_entry():
         assert info.sample_rate == 24000
 
 
+def test_build_cache_path_uses_manifest_path_without_resolving_symlinks():
+    with TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        source_root = tmp_path / "download" / "GigaSpeech"
+        source_root.mkdir(parents=True)
+
+        manifest_path = source_root / "audio" / "podcast" / "P0000" / "sample.opus"
+        cache_root = tmp_path / "cache"
+
+        cache_path = build_cache_path(
+            source_path=str(manifest_path),
+            source_root=str(source_root),
+            cache_root=str(cache_root),
+            target_sample_rate=24000,
+            codec="flac",
+        )
+
+        assert cache_path == (
+            cache_root
+            / "24000"
+            / "audio"
+            / "podcast"
+            / "P0000"
+            / "sample.flac"
+        )
+
+
 if __name__ == "__main__":
     test_process_recording_resamples_audio_and_rewrites_manifest_entry()
+    test_build_cache_path_uses_manifest_path_without_resolving_symlinks()
     print("ok")

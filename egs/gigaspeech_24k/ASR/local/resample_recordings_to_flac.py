@@ -47,8 +47,8 @@ def build_cache_path(
     target_sample_rate: int,
     codec: str,
 ) -> Path:
-    source = Path(source_path).resolve(strict=False)
-    root = Path(source_root).resolve(strict=False)
+    source = Path(source_path)
+    root = Path(source_root)
     try:
         relative = source.relative_to(root)
     except ValueError as exc:

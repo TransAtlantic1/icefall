@@ -45,6 +45,19 @@ ln -sfv /path/to/GigaSpeech download/GigaSpeech
 - `local/resample_recordings_to_flac.py` 用它把 recordings 离线升采样到 24 kHz FLAC
 - `local/f5tts_mel_extractor.py` 用它计算 100 维 F5-TTS 风格 log-mel 特征
 
+采样率方面有一个容易踩坑的点：
+
+- GigaSpeech manifest 里的 `sampling_rate` 往往是语料语义上的 `16 kHz`
+- 但原始 `.opus` 文件实际解码出来通常是 `48 kHz`
+- 对 `24k` recipe 而言，推荐且现在默认遵循的原则是：直接从原始音频一次重采样到 `24 kHz`
+- 不推荐先按 manifest 读成 `16 kHz`，再做 `16 -> 24 kHz` 二次重采样
+
+因此：
+
+- `prepare.sh` stage 4 的离线缓存是按原始 source 直接生成 `24 kHz` FLAC
+- `zipformer/streaming_decode.py` 也应直接从原始 source 切段并一次重采样到 `24 kHz`
+- 批量 `decode.py` 的默认路径仍然是消费预计算好的 `24 kHz` 特征
+
 ## 数据准备流程
 
 主流程的 stage 编号如下：
@@ -122,6 +135,7 @@ cat /sys/fs/cgroup/memory.events
 
 - 这个目录里的主路径仍然是基于子集 `M` 的 `zipformer` recipe。
 - 当前 24k recipe 的重点是统一 100 维特征契约，确保数据准备、训练、解码和导出入口能够消费同一套 24k 特征。
+- 对 GigaSpeech 这类 OPUS 数据，统一前端时要特别避免 `raw -> 16k -> 24k` 这种级联重采样，优先保持 `raw -> 24k` 单次重采样。
 - `prepare.sh` 仍然保留了 `--stage4-num-workers` 和 `--stage4-batch-duration` 作为兼容参数，但新流程推荐使用 `--feature-num-workers` 和 `--feature-batch-duration`。
 - 如果要和 16k recipe 做并排对比，建议复用同一个 W&B project/group，并把两个实验目录放在同一个父目录下。
 - 目前默认的数据产物仍然写到本目录下的 `data/`，后续如果要迁移到共享存储或 `public` 目录，建议统一通过脚本参数或软链处理。

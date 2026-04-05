@@ -3,11 +3,17 @@
 标准主流程脚本：`prepare.sh`。
 
 本 recipe 的特征配置：
-- 原始音频主要仍然是 16 kHz
+- 原始音频采样率并不统一，manifest 语义采样率常见为 16 kHz
 - 先把 recordings 离线升采样到 24 kHz FLAC 缓存
 - 再基于 24 kHz recordings 生成 raw cuts 和 100 维特征
 - 默认主流程：`stage 1 -> 3 -> 4 -> 5 -> 6`
 - `stage 7-8` 是可选的 split-based `M` 子集特征链路
+
+采样率注意点：
+- GigaSpeech manifest 往往声明 `16 kHz`，但原始 `.opus` 文件实际解码采样率常见为 `48 kHz`
+- `24k` recipe 应优先保持 `raw source -> 24 kHz` 的单次重采样
+- 不推荐走 `raw source -> 16 kHz -> 24 kHz` 的级联重采样
+- 因此 stage 4 的离线缓存、以及需要在线取波形的推理入口，都应直接从原始 source 到 `24 kHz`
 
 数据准备可以在 CPU-only 机器上完成。训练和解码建议在 GPU 机器上完成。
 
@@ -89,6 +95,8 @@ export WANDB_GROUP=zipformer-m
 - Stage 7、8：只有在你明确需要 split-based `M` 特征链路时才跑
 - Stage 10：训练前需要准备好
 - 训练和解码：切到 GPU 机器再跑
+- 默认批量 `zipformer/decode.py` 消费的是预计算好的 `24 kHz` 特征
+- 如果使用 `zipformer/streaming_decode.py` 这种在线提特征入口，应直接从原始 source 切段并一次重采样到 `24 kHz`
 
 ## 4. Stage 1：准备 manifests
 
@@ -131,6 +139,10 @@ bash prepare.sh \
 - `data/manifests_resampled/24000/gigaspeech_recordings_TEST.jsonl.gz`
 - `data/manifests_resampled/24000/recordings_M_split_100/`
 - `data/audio_cache/gigaspeech/24000/`
+
+说明：
+- 这里的离线缓存是直接按原始 source 解码后一次重采样到 `24 kHz`
+- 目的就是避免把 GigaSpeech 的 OPUS 先压到 manifest 里的 `16 kHz`，再做 `16 -> 24 kHz` 二次重采样
 
 ### 5.3 Stage 4：多实例 CPU 分片跑法
 

@@ -44,6 +44,7 @@ import torch
 from asr_datamodule import GigaSpeechAsrDataModule
 from decode_stream import DecodeStream
 from lhotse import CutSet
+from lhotse.audio.backend import read_audio
 from streaming_beam_search import (
     fast_beam_search_one_best,
     greedy_search,
@@ -75,6 +76,67 @@ if str(_LOCAL_DIR) not in sys.path:
 from f5tts_mel_extractor import F5TTSMelConfig, F5TTSMelExtractor
 
 LOG_EPS = math.log(1e-10)
+
+
+def load_cut_audio_from_original_source(cut) -> Tuple[np.ndarray, int]:
+    """Load a cut directly from its original source without forcing manifest SR.
+
+    For GigaSpeech OPUS sources, `cut.load_audio()` will typically decode using the
+    manifest sampling rate (often 16 kHz) and the 24k extractor would then resample
+    16k -> 24k. In this recipe we want a single-stage raw decode -> 24k resample,
+    so streaming decode bypasses `cut.load_audio()` and reads the original source
+    segment directly.
+    """
+
+    recording = getattr(cut, "recording", None)
+    if recording is None:
+        audio = cut.load_audio()
+        return audio, getattr(cut, "sampling_rate", None)
+
+    requested_channel = getattr(cut, "channel", None)
+    if requested_channel is None:
+        requested_channels = set(recording.channel_ids)
+    elif isinstance(requested_channel, list):
+        requested_channels = set(requested_channel)
+    else:
+        requested_channels = {requested_channel}
+
+    samples_per_source = []
+    sample_rate = None
+    for source in recording.sources:
+        if not requested_channels.intersection(source.channels):
+            continue
+
+        samples, current_sr = read_audio(
+            source.source,
+            offset=cut.start,
+            duration=cut.duration,
+            force_opus_sampling_rate=None,
+        )
+
+        if sample_rate is None:
+            sample_rate = current_sr
+        else:
+            assert sample_rate == current_sr, (
+                f"Mismatched source sampling rates inside recording {recording.id}: "
+                f"{sample_rate} vs {current_sr}"
+            )
+
+        if samples.ndim == 1:
+            samples = samples.reshape(1, -1)
+
+        channels_to_remove = [
+            idx for idx, cid in enumerate(source.channels) if cid not in requested_channels
+        ]
+        if channels_to_remove:
+            samples = np.delete(samples, channels_to_remove, axis=0)
+        samples_per_source.append(samples.astype(np.float32))
+
+    if not samples_per_source:
+        raise ValueError(f"No audio source matched cut {cut.id}")
+
+    audio = np.vstack(samples_per_source)
+    return audio, sample_rate
 
 
 def get_parser():
@@ -571,7 +633,7 @@ def decode_dataset(
             device=device,
         )
 
-        audio: np.ndarray = cut.load_audio()
+        audio, sampling_rate = load_cut_audio_from_original_source(cut)
         # audio.shape: (1, num_samples)
         assert len(audio.shape) == 2
         assert audio.shape[0] == 1, "Should be single channel"
@@ -587,7 +649,6 @@ def decode_dataset(
 
         samples = torch.from_numpy(audio).squeeze(0)
 
-        sampling_rate = getattr(cut, "sampling_rate", cut.recording.sampling_rate)
         feature = torch.from_numpy(
             extractor.extract(samples, sampling_rate=sampling_rate)
         ).to(device)

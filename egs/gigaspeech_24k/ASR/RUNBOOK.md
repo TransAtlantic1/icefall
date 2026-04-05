@@ -245,7 +245,7 @@ bash prepare.sh \
   --feature-start 0 \
   --feature-stop 5 \
   --feature-num-workers 4 \
-  --feature-batch-duration 200
+  --feature-batch-duration 800
 ```
 
 这里的 `feature-start/feature-stop` 是左闭右开区间，用来控制当前 worker 实际处理哪些 split。
@@ -261,7 +261,7 @@ CUDA_VISIBLE_DEVICES='' nohup bash prepare.sh \
   --feature-start 0 \
   --feature-stop 20 \
   --feature-num-workers 4 \
-  --feature-batch-duration 200 \
+  --feature-batch-duration 800 \
   > stage8_split_feature.log 2>&1 &
 ```
 
@@ -276,7 +276,7 @@ CUDA_VISIBLE_DEVICES='' nohup bash prepare.sh \
   --feature-start 0 \
   --feature-stop 5 \
   --feature-num-workers 4 \
-  --feature-batch-duration 200 \
+  --feature-batch-duration 800 \
   > stage8_split_0_5.log 2>&1 &
 ```
 
@@ -285,6 +285,67 @@ CUDA_VISIBLE_DEVICES='' nohup bash prepare.sh \
 - 如果某个 `gigaspeech_cuts_M.<idx>.jsonl.gz` 已存在，就不会重算这一片
 - 所以同一个区间可以安全重跑，用来做断点续传
 - 想强制重算某一段时，再单独调用 `local/compute_fbank_gigaspeech_splits.py --overwrite true`
+
+4 台互不相连机器的 `nohup` 示例，按 `20` 片均分成 4 组，每台机器处理 5 片：
+
+```bash
+# 机器 A
+CUDA_VISIBLE_DEVICES='' nohup bash prepare.sh \
+  --stage 8 \
+  --stop-stage 8 \
+  --cpu-only true \
+  --feature-num-splits 20 \
+  --feature-start 0 \
+  --feature-stop 5 \
+  --feature-num-workers 4 \
+  --feature-batch-duration 800 \
+  > stage8_split_0_5.log 2>&1 &
+
+# 机器 B
+CUDA_VISIBLE_DEVICES='' nohup bash prepare.sh \
+  --stage 8 \
+  --stop-stage 8 \
+  --cpu-only true \
+  --feature-num-splits 20 \
+  --feature-start 5 \
+  --feature-stop 10 \
+  --feature-num-workers 4 \
+  --feature-batch-duration 800 \
+  > stage8_split_5_10.log 2>&1 &
+
+# 机器 C
+CUDA_VISIBLE_DEVICES='' nohup bash prepare.sh \
+  --stage 8 \
+  --stop-stage 8 \
+  --cpu-only true \
+  --feature-num-splits 20 \
+  --feature-start 10 \
+  --feature-stop 15 \
+  --feature-num-workers 4 \
+  --feature-batch-duration 800 \
+  > stage8_split_10_15.log 2>&1 &
+
+# 机器 D
+CUDA_VISIBLE_DEVICES='' nohup bash prepare.sh \
+  --stage 8 \
+  --stop-stage 8 \
+  --cpu-only true \
+  --feature-num-splits 20 \
+  --feature-start 15 \
+  --feature-stop 20 \
+  --feature-num-workers 4 \
+  --feature-batch-duration 800 \
+  > stage8_split_15_20.log 2>&1 &
+```
+
+这个脚本默认会：
+
+- 启动 `4` 个 `nohup` worker
+- 使用 `feature_num_splits=20`
+- 给每个 worker 分 `5` 片
+- 使用 `feature_num_workers=4`
+- 使用 `feature_batch_duration=800`
+- 把日志写到 `data/logs/stage8_split.<start>-<stop>.log`
 
 ## 7. Stage 9-11：MUSAN、BPE、phone
 

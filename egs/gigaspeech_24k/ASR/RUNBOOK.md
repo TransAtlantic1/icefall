@@ -320,6 +320,43 @@ CUDA_VISIBLE_DEVICES='' nohup bash prepare.sh \
 - 所以同一个区间可以安全重跑，用来做断点续传
 - 想强制重算某一段时，再单独调用 `local/compute_fbank_gigaspeech_splits.py --overwrite true`
 
+只看日志来监测 4 台机器的进度时，推荐用下面这些命令：
+
+先看 4 个日志文件最近是否还在更新：
+
+```bash
+for f in stage8_split_0_5.log stage8_split_5_10.log stage8_split_10_15.log stage8_split_15_20.log; do
+  stat -c '%y %s %n' "$f"
+done
+```
+
+看每台机器当前处理到哪一片、最近有没有报错：
+
+```bash
+for f in stage8_split_0_5.log stage8_split_5_10.log stage8_split_10_15.log stage8_split_15_20.log; do
+  echo "===== $f ====="
+  tail -n 40 "$f"
+done
+```
+
+只盯某一台机器：
+
+```bash
+tail -f stage8_split_0_5.log
+```
+
+如果你想看每个区间是否已经真正产出 split cuts，可以配合看输出文件：
+
+```bash
+find data/fbank/gigaspeech_M_split -maxdepth 1 -name 'gigaspeech_cuts_M.*.jsonl.gz' | sort
+```
+
+当 20 片全部完成后，再确认合并产物是否已经生成：
+
+```bash
+ls -lh data/fbank/gigaspeech_cuts_M.jsonl.gz
+```
+
 `stage 8` 结束后还有一个重要行为：
 
 - 如果所有 split 的 `gigaspeech_cuts_M.<idx>.jsonl.gz` 都已经存在，脚本会自动合并它们

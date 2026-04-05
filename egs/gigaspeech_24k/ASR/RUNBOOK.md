@@ -8,6 +8,8 @@
 - 再基于 24 kHz recordings 生成 raw cuts 和 100 维特征
 - 默认主流程：`stage 1 -> 3 -> 4 -> 5 -> 6`
 - `stage 7-8` 是可选的 split-based `M` 子集特征链路
+- 如果你要让 `M` 走 split 链路，同时保持训练入口不变，推荐：
+  `stage 5 -> stage 6(只做 DEV/TEST) -> stage 7 -> stage 8`
 
 采样率注意点：
 - GigaSpeech manifest 往往声明 `16 kHz`，但原始 `.opus` 文件实际解码采样率常见为 `48 kHz`
@@ -50,9 +52,9 @@ export WANDB_GROUP=zipformer-m
 4. Stage 3：把 `M` recordings 切成 shards
 5. Stage 4：离线把 recordings 升采样到 24 kHz
 6. Stage 5：文本预处理并基于 recordings 生成 raw cuts
-7. Stage 6：计算 `DEV/TEST/M` 的 100 维特征
+7. Stage 6：计算指定 subset 的 100 维特征
 8. Stage 7：把 `M` raw cuts 切成 split manifests
-9. Stage 8：按 split 重新计算 `M` 的特征
+9. Stage 8：按 split 重新计算 `M` 的特征，并在全部完成后自动合并成训练可用的 `gigaspeech_cuts_M.jsonl.gz`
 10. Stage 9：计算 MUSAN 特征
 11. Stage 10：准备 BPE 语言目录
 12. Stage 11：准备 phone lexicon
@@ -82,7 +84,7 @@ export WANDB_GROUP=zipformer-m
 | 3 | 切分 `M` recordings | CPU | 单机一次 |
 | 4 | 离线 24k 重采样 | CPU | 多实例分片 |
 | 5 | 文本预处理 + raw cuts | CPU | 单机一次 |
-| 6 | 计算主 24k 特征 | CPU | 单机一次 |
+| 6 | 计算指定 subset 的主 24k 特征 | CPU | 单机一次 |
 | 7 | 切分 `M` raw cuts | CPU | 单机一次，可选 |
 | 8 | 计算 split `M` 特征 | CPU 或 GPU | 多分片，可选 |
 | 9 | MUSAN 特征 | CPU | 单机一次，可选 |
@@ -174,6 +176,7 @@ data/logs/resample.<start>-<end>.log
 ## 6. Stage 5-8：raw cuts 与 24k 特征提取
 
 `stage 5-6` 是 `24k` 的标准主路径，`stage 7-8` 则是可选的 split-based `M` 特征链路。
+如果你想让 `M` 用 split 路径、而 `DEV/TEST` 仍保留单文件验证集特征，推荐使用 `stage 5 -> stage 6(DEV,TEST) -> stage 7 -> stage 8`。
 
 ### 6.1 Stage 5-6：标准主路径
 
@@ -219,6 +222,25 @@ bash prepare.sh \
   --feature-num-workers 4 \
   --feature-batch-duration 200
 ```
+
+如果你只想先生成 `DEV/TEST` 特征，把 `M` 留给 `stage 7-8`：
+
+```bash
+CUDA_VISIBLE_DEVICES='' \
+bash prepare.sh \
+  --stage 6 \
+  --stop-stage 6 \
+  --cpu-only true \
+  --feature-subsets DEV,TEST \
+  --feature-num-workers 4 \
+  --feature-batch-duration 200
+```
+
+这条命令会生成：
+- `data/fbank/gigaspeech_cuts_DEV.jsonl.gz`
+- `data/fbank/gigaspeech_cuts_TEST.jsonl.gz`
+
+它不会生成 `data/fbank/gigaspeech_cuts_M.jsonl.gz`，因为后者将由 `stage 8` 在所有 `M` split 完成后自动合并得到。
 
 参数设计原则：
 - `feature-batch-duration` 是峰值内存的主开关，优先调它
@@ -297,6 +319,13 @@ CUDA_VISIBLE_DEVICES='' nohup bash prepare.sh \
 - 如果某个 `gigaspeech_cuts_M.<idx>.jsonl.gz` 已存在，就不会重算这一片
 - 所以同一个区间可以安全重跑，用来做断点续传
 - 想强制重算某一段时，再单独调用 `local/compute_fbank_gigaspeech_splits.py --overwrite true`
+
+`stage 8` 结束后还有一个重要行为：
+
+- 如果所有 split 的 `gigaspeech_cuts_M.<idx>.jsonl.gz` 都已经存在，脚本会自动合并它们
+- 合并结果写到 `data/fbank/gigaspeech_cuts_M.jsonl.gz`
+- 这样训练入口仍然可以沿用默认 datamodule，不需要额外改 `manifest_dir`
+- 如果 split 还没全部完成，脚本不会生成这个合并文件；已有的旧合并文件也会被删掉，避免训练误读半成品
 
 4 台互不相连机器的 `nohup` 示例，按 `20` 片均分成 4 组，每台机器处理 5 片：
 
@@ -482,7 +511,7 @@ num_features = 100
 
 ## 12. 备注
 
-- `stage 5-6` 是 `24k` 的标准主路径，训练前至少要把这一段跑完
-- `stage 7-8` 只是可选的 split-based `M` 特征链路，不是主训练路径的硬前置
+- `stage 5-6` 是 `24k` 的标准主路径；如果你改走 split `M` 路径，至少也要先把 `DEV/TEST` 的 `stage 6` 跑完
+- `stage 7-8` 可以单独承担 `M` 的特征生成；当所有 split 完成后，它会自动合并回 `data/fbank/gigaspeech_cuts_M.jsonl.gz`
 - `use_resampled_audio=true` 时，`stage 5` 会读取 `stage 4` 生成的 24 kHz recordings manifests
 - datamodule 默认把 `--enable-musan` 设为 `False`

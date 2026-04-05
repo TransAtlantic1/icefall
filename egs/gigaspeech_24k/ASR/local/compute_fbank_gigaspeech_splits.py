@@ -17,6 +17,7 @@
 # limitations under the License.
 
 import argparse
+import gzip
 import logging
 import os
 from pathlib import Path
@@ -64,6 +65,17 @@ def load_cutset(path: Path) -> CutSet:
         return cut_set
 
     raise ValueError(f"Unable to load cut set from {path}")
+
+
+def merge_split_manifests(input_paths, output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = output_path.with_suffix(output_path.suffix + ".tmp")
+    with gzip.open(tmp_path, "wt") as out_f:
+        for path in input_paths:
+            with gzip.open(path, "rt") as in_f:
+                for line in in_f:
+                    out_f.write(line)
+    os.replace(tmp_path, output_path)
 
 
 def get_args():
@@ -118,6 +130,7 @@ def compute_fbank_gigaspeech_splits(args):
     output_dir = "data/fbank/gigaspeech_M_split"
     output_dir = Path(output_dir)
     assert output_dir.exists(), f"{output_dir} does not exist!"
+    merged_cuts_path = output_dir.parent / "gigaspeech_cuts_M.jsonl.gz"
 
     raw_paths = sorted(output_dir.glob("gigaspeech_cuts_M_raw.*.jsonl.gz"))
     num_splits = len(raw_paths)
@@ -188,6 +201,31 @@ def compute_fbank_gigaspeech_splits(args):
         logging.info(f"Saving to {cuts_path}")
         cut_set.to_file(cuts_path)
         logging.info(f"Saved to {cuts_path}")
+
+    split_cuts_paths = [
+        output_dir
+        / raw_path.name.replace("gigaspeech_cuts_M_raw.", "gigaspeech_cuts_M.")
+        for raw_path in raw_paths
+    ]
+    missing_paths = [path for path in split_cuts_paths if not path.is_file()]
+    if missing_paths:
+        if merged_cuts_path.exists():
+            logging.info(
+                "Removing stale merged M cuts because %s split outputs are still missing",
+                len(missing_paths),
+            )
+            merged_cuts_path.unlink()
+        logging.info(
+            "Skipping merged M cuts export until all split manifests exist "
+            "(missing=%s/%s)",
+            len(missing_paths),
+            len(split_cuts_paths),
+        )
+        return
+
+    logging.info("Merging %s split cut manifests into %s", len(split_cuts_paths), merged_cuts_path)
+    merge_split_manifests(split_cuts_paths, merged_cuts_path)
+    logging.info("Saved merged M cuts to %s", merged_cuts_path)
 
 
 def main():

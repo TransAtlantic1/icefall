@@ -48,6 +48,25 @@ def str2bool(value):
     raise argparse.ArgumentTypeError(f"Invalid boolean value: {value}")
 
 
+def parse_subsets(value: str):
+    subsets = []
+    for item in value.split(","):
+        subset = item.strip().upper()
+        if not subset:
+            continue
+        subsets.append(subset)
+
+    valid = {"DEV", "TEST", "M"}
+    invalid = sorted(set(subsets) - valid)
+    if invalid:
+        raise argparse.ArgumentTypeError(
+            f"Invalid subsets: {invalid}. Expected a comma-separated subset of {sorted(valid)}."
+        )
+    if not subsets:
+        raise argparse.ArgumentTypeError("At least one subset must be provided.")
+    return subsets
+
+
 def load_cutset(path: Path) -> CutSet:
     cut_set = CutSet.from_file(path)
     if cut_set is not None:
@@ -86,20 +105,17 @@ def get_args():
         default=False,
         help="Recompute features even if the cut manifests already exist.",
     )
+    parser.add_argument(
+        "--subsets",
+        type=parse_subsets,
+        default=parse_subsets("DEV,TEST,M"),
+        help="Comma-separated subsets to process, e.g. DEV,TEST or DEV,TEST,M.",
+    )
     return parser.parse_args()
 
 
 def compute_fbank_gigaspeech(args):
     in_out_dir = Path("data/fbank")
-
-    subsets = (
-        "DEV",
-        "TEST",
-        "M",
-        # "L",
-        # "S",
-        # "XS",
-    )
 
     device = torch.device("cpu")
     if torch.cuda.is_available():
@@ -107,8 +123,9 @@ def compute_fbank_gigaspeech(args):
     extractor = F5TTSMelExtractor(F5TTSMelConfig(device=str(device)))
 
     logging.info(f"device: {device}")
+    logging.info("Processing subsets: %s", ",".join(args.subsets))
 
-    for partition in subsets:
+    for partition in args.subsets:
         cuts_path = in_out_dir / f"gigaspeech_cuts_{partition}.jsonl.gz"
         if cuts_path.is_file() and not args.overwrite:
             logging.info(f"{cuts_path} exists - skipping")

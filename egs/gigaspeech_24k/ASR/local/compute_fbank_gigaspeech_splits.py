@@ -39,6 +39,17 @@ torch.set_num_interop_threads(1)
 torch.multiprocessing.set_sharing_strategy("file_system")
 
 
+def str2bool(value):
+    if isinstance(value, bool):
+        return value
+    value = value.lower()
+    if value in ("yes", "true", "t", "1", "y"):
+        return True
+    if value in ("no", "false", "f", "0", "n"):
+        return False
+    raise argparse.ArgumentTypeError(f"Invalid boolean value: {value}")
+
+
 def load_cutset(path: Path) -> CutSet:
     cut_set = CutSet.from_file(path)
     if cut_set is not None:
@@ -94,14 +105,28 @@ def get_args():
         default=-1,
         help="Stop processing pieces until this number (exclusive).",
     )
+    parser.add_argument(
+        "--overwrite",
+        type=str2bool,
+        default=False,
+        help="Recompute split features even if the cut manifests already exist.",
+    )
     return parser.parse_args()
 
 
 def compute_fbank_gigaspeech_splits(args):
-    num_splits = args.num_splits
     output_dir = "data/fbank/gigaspeech_M_split"
     output_dir = Path(output_dir)
     assert output_dir.exists(), f"{output_dir} does not exist!"
+
+    raw_paths = sorted(output_dir.glob("gigaspeech_cuts_M_raw.*.jsonl.gz"))
+    num_splits = len(raw_paths)
+    if args.num_splits != num_splits:
+        logging.info(
+            "num_splits mismatch: arg=%s, discovered=%s. Using discovered value.",
+            args.num_splits,
+            num_splits,
+        )
 
     start = args.start
     stop = args.stop
@@ -116,17 +141,21 @@ def compute_fbank_gigaspeech_splits(args):
     extractor = F5TTSMelExtractor(F5TTSMelConfig(device=str(device)))
     logging.info(f"device: {device}")
 
-    num_digits = 8  # num_digits is fixed by lhotse split-lazy
     for i in range(start, stop):
-        idx = f"{i}".zfill(num_digits)
+        raw_cuts_path = raw_paths[i]
+        idx = raw_cuts_path.name.replace("gigaspeech_cuts_M_raw.", "").replace(
+            ".jsonl.gz", ""
+        )
         logging.info(f"Processing {idx}/{num_splits}")
 
         cuts_path = output_dir / f"gigaspeech_cuts_M.{idx}.jsonl.gz"
-        if cuts_path.is_file():
+        if cuts_path.is_file() and not args.overwrite:
             logging.info(f"{cuts_path} exists - skipping")
             continue
+        if cuts_path.is_file():
+            logging.info("Removing stale cuts manifest %s", cuts_path)
+            cuts_path.unlink()
 
-        raw_cuts_path = output_dir / f"gigaspeech_cuts_M_raw.{idx}.jsonl.gz"
         if not raw_cuts_path.is_file():
             logging.info(f"{raw_cuts_path} does not exist - skipping it")
             continue

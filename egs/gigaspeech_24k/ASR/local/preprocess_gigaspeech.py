@@ -20,9 +20,12 @@ import argparse
 import logging
 import re
 from pathlib import Path
+from typing import Optional
 
-from lhotse import CutSet, SupervisionSegment
+import lhotse
+from lhotse import CutSet, RecordingSet, SupervisionSegment
 from lhotse.recipes.utils import read_manifests_if_cached
+from lhotse.serialization import load_manifest_lazy_or_eager
 
 # Similar text filtering and normalization procedure as in:
 # https://github.com/SpeechColab/GigaSpeech/blob/main/toolkits/kaldi/gigaspeech_data_prep.sh
@@ -59,6 +62,27 @@ def get_args():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument(
+        "--manifest-dir",
+        type=Path,
+        default=Path("data/manifests"),
+        help="Input directory containing the original GigaSpeech manifests.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("data/fbank"),
+        help="Output directory for raw cut manifests.",
+    )
+    parser.add_argument(
+        "--recordings-manifest-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Directory containing recording manifests used to build the raw cuts. "
+            "If omitted, use --manifest-dir."
+        ),
+    )
+    parser.add_argument(
         "--cpu-only",
         type=str2bool,
         default=False,
@@ -67,25 +91,47 @@ def get_args():
     return parser.parse_args()
 
 
-def preprocess_gigaspeech():
-    src_dir = Path("data/manifests")
-    output_dir = Path("data/fbank")
-    output_dir.mkdir(exist_ok=True)
+def load_recordings(
+    partition: str, preferred_dir: Path, fallback_dir: Path
+) -> Optional[RecordingSet]:
+    candidate_dirs = [preferred_dir]
+    if preferred_dir.resolve() != fallback_dir.resolve():
+        candidate_dirs.append(fallback_dir)
 
-    dataset_parts = (
-        "DEV",
-        "TEST",
-        "M",
-        # "XL",
-        # "L",
-        # "S",
-        # "XS",
-    )
+    for manifest_dir in candidate_dirs:
+        if partition == "M":
+            split_dirs = sorted(manifest_dir.glob("recordings_M_split_*"))
+            for split_dir in split_dirs:
+                pieces = sorted(split_dir.glob("gigaspeech_recordings_M.*.jsonl.gz"))
+                if pieces:
+                    logging.info(
+                        "Loading %s M recording shards from %s", len(pieces), split_dir
+                    )
+                    return lhotse.combine(
+                        load_manifest_lazy_or_eager(piece) for piece in pieces
+                    )
+
+        recordings_path = manifest_dir / f"gigaspeech_recordings_{partition}.jsonl.gz"
+        recordings = load_manifest_lazy_or_eager(recordings_path)
+        if recordings is not None:
+            logging.info("Using %s recordings from %s", partition, recordings_path)
+            return recordings
+
+    return None
+
+
+def preprocess_gigaspeech(
+    manifest_dir: Path, output_dir: Path, recordings_manifest_dir: Optional[Path] = None
+):
+    output_dir.mkdir(parents=True, exist_ok=True)
+    recordings_dir = recordings_manifest_dir or manifest_dir
+
+    dataset_parts = ("DEV", "TEST", "M")
 
     logging.info("Loading manifest (may take 4 minutes)")
     manifests = read_manifests_if_cached(
         dataset_parts=dataset_parts,
-        output_dir=src_dir,
+        output_dir=manifest_dir,
         prefix="gigaspeech",
         suffix="jsonl.gz",
     )
@@ -98,30 +144,34 @@ def preprocess_gigaspeech():
         dataset_parts,
     )
 
-    for partition, m in manifests.items():
-        logging.info(f"Processing {partition}")
+    for partition, manifests_for_partition in manifests.items():
+        logging.info("Processing %s", partition)
         raw_cuts_path = output_dir / f"gigaspeech_cuts_{partition}_raw.jsonl.gz"
-        if raw_cuts_path.is_file():
-            logging.info(f"{partition} already exists - skipping")
-            continue
+        if raw_cuts_path.exists():
+            raw_cuts_path.unlink()
 
-        # Note this step makes the recipe different than LibriSpeech:
-        # We must filter out some utterances and remove punctuation
-        # to be consistent with Kaldi.
         logging.info("Filtering OOV utterances from supervisions")
-        m["supervisions"] = m["supervisions"].filter(has_no_oov)
-        logging.info(f"Normalizing text in {partition}")
-        for sup in m["supervisions"]:
-            sup.text = normalize_text(sup.text)
+        supervisions = manifests_for_partition["supervisions"].filter(has_no_oov)
+        logging.info("Normalizing text in %s", partition)
+        for supervision in supervisions:
+            supervision.text = normalize_text(supervision.text)
 
-        # Create long-recording cut manifests.
-        logging.info(f"Processing {partition}")
+        recordings = load_recordings(
+            partition=partition,
+            preferred_dir=recordings_dir,
+            fallback_dir=manifest_dir,
+        )
+        if recordings is None:
+            raise ValueError(
+                f"Unable to find recordings for {partition} in {recordings_dir} or {manifest_dir}"
+            )
+
         cut_set = CutSet.from_manifests(
-            recordings=m["recordings"],
-            supervisions=m["supervisions"],
+            recordings=recordings,
+            supervisions=supervisions,
         )
 
-        logging.info(f"Saving to {raw_cuts_path}")
+        logging.info("Saving to %s", raw_cuts_path)
         cut_set.to_file(raw_cuts_path)
 
 
@@ -133,7 +183,11 @@ def main():
     if not args.cpu_only:
         from icefall.utils import str2bool as _icefall_str2bool  # noqa: F401
 
-    preprocess_gigaspeech()
+    preprocess_gigaspeech(
+        manifest_dir=args.manifest_dir,
+        output_dir=args.output_dir,
+        recordings_manifest_dir=args.recordings_manifest_dir,
+    )
 
 
 if __name__ == "__main__":

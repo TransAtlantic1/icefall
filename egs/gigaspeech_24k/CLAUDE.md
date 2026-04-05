@@ -13,14 +13,17 @@ This is a GigaSpeech ASR recipe under the icefall framework (k2-fsa/icefall). It
 # Stage 1: Prepare GigaSpeech manifests (M, DEV, TEST)
 bash prepare.sh --stage 1 --stop-stage 1
 
-# Stage 3-6: Preprocess + compute F5-TTS mel features
-bash prepare.sh --stage 3 --stop-stage 6
+# Stage 3-4: split recordings and resample them offline to 24 kHz
+bash prepare.sh --stage 3 --stop-stage 4
 
-# Stage 8: Prepare BPE vocabulary (vocab_size=500)
-bash prepare.sh --stage 8 --stop-stage 8
+# Stage 5-6: build raw cuts from the resampled recordings and compute 24k features
+bash prepare.sh --stage 5 --stop-stage 6
+
+# Stage 10: Prepare BPE vocabulary (vocab_size=500)
+bash prepare.sh --stage 10 --stop-stage 10
 ```
 
-Stages 2 and 7 (MUSAN) are intentionally skipped in this recipe. Stage 0 (download) is skipped because data is softlinked.
+Stage 2 and stage 9 (MUSAN) are intentionally skipped in this recipe by default. Stage 0 (download) is skipped because data is typically softlinked.
 
 ### Training
 ```bash
@@ -49,7 +52,7 @@ cd ASR
 ## Environment Dependencies
 
 ### Python packages
-- `torch` and `torchaudio` for Zipformer training and the custom 24k mel extractor.
+- `torch` and `torchaudio` for Zipformer training, offline resampling, and the custom 24k mel extractor.
 - `lhotse` for manifests, feature extraction, and dataloading.
 - `k2` for the icefall ASR runtime.
 - `sentencepiece` for BPE model loading in train/decode.
@@ -58,7 +61,7 @@ cd ASR
 - `lilcom` and `kaldifeat` as part of the standard icefall/lhotse feature pipeline.
 
 ### Command-line tools
-- `jq` for `prepare.sh --stage 8`.
+- `jq` for `prepare.sh --stage 10` when available.
 - `sed`, `find`, `gzip`/`gunzip` for the existing recipe scripts.
 
 ### Runtime notes
@@ -72,15 +75,17 @@ cd ASR
 ```
 download/GigaSpeech (16kHz opus)
   → Stage 1: lhotse manifests (data/manifests/)
-  → Stage 3: preprocess (OOV filter + text normalize → raw cuts)
-  → Stage 4-6: F5TTSMelExtractor (16k→24k resample + vocos mel) → data/fbank/
-  → Stage 8: BPE tokenizer → data/lang_bpe_500/
+  → Stage 3: split M recordings into shards
+  → Stage 4: offline resample recordings → data/manifests_resampled/24000 + data/audio_cache/gigaspeech/24000
+  → Stage 5: preprocess (OOV filter + text normalize → raw cuts built from resampled recordings)
+  → Stage 6/8: F5TTSMelExtractor (24k mel only) → data/fbank/
+  → Stage 10: BPE tokenizer → data/lang_bpe_500/
 ```
 
 ### Feature Extraction: F5-TTS vs Standard
 
 The custom extractor in `ASR/local/f5tts_mel_extractor.py` implements a lhotse `FeatureExtractor` that:
-1. Resamples 16kHz audio to 24kHz internally via `torchaudio.functional.resample`
+1. Accepts the offline-resampled 24k audio produced by stage 4.
 2. Computes mel spectrogram identical to `F5-TTS/src/f5_tts/model/modules.py:get_vocos_mel_spectrogram`
 3. Parameters: `sr=24000, n_fft=1024, hop=256, n_mels=100, power=1, center=True`
 4. Log compression: `mel.clamp(min=1e-5).log()`
@@ -102,6 +107,8 @@ The custom extractor in `ASR/local/f5tts_mel_extractor.py` implements a lhotse `
 
 ## Important Paths
 - Download data: `ASR/download/` (symlink to shared GigaSpeech corpus)
+- Resampled recording manifests: `ASR/data/manifests_resampled/24000/`
+- Resampled audio cache: `ASR/data/audio_cache/gigaspeech/24000/`
 - Computed features: `ASR/data/fbank/`
 - BPE model: `ASR/data/lang_bpe_500/bpe.model`
 - Shared utilities: `ASR/shared/` → `icefall/shared/`

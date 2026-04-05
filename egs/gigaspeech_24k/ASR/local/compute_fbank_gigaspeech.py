@@ -37,6 +37,17 @@ torch.set_num_interop_threads(1)
 torch.multiprocessing.set_sharing_strategy("file_system")
 
 
+def str2bool(value):
+    if isinstance(value, bool):
+        return value
+    value = value.lower()
+    if value in ("yes", "true", "t", "1", "y"):
+        return True
+    if value in ("no", "false", "f", "0", "n"):
+        return False
+    raise argparse.ArgumentTypeError(f"Invalid boolean value: {value}")
+
+
 def load_cutset(path: Path) -> CutSet:
     cut_set = CutSet.from_file(path)
     if cut_set is not None:
@@ -69,6 +80,12 @@ def get_args():
         default=1000.0,
         help="The maximum number of audio seconds in a batch.",
     )
+    parser.add_argument(
+        "--overwrite",
+        type=str2bool,
+        default=False,
+        help="Recompute features even if the cut manifests already exist.",
+    )
     return parser.parse_args()
 
 
@@ -93,9 +110,12 @@ def compute_fbank_gigaspeech(args):
 
     for partition in subsets:
         cuts_path = in_out_dir / f"gigaspeech_cuts_{partition}.jsonl.gz"
-        if cuts_path.is_file():
+        if cuts_path.is_file() and not args.overwrite:
             logging.info(f"{cuts_path} exists - skipping")
             continue
+        if cuts_path.is_file():
+            logging.info("Removing stale cuts manifest %s", cuts_path)
+            cuts_path.unlink()
 
         raw_cuts_path = in_out_dir / f"gigaspeech_cuts_{partition}_raw.jsonl.gz"
 

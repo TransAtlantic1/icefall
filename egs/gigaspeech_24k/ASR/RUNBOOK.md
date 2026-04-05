@@ -5,8 +5,8 @@
 这个 recipe 的核心目标是在 GigaSpeech ASR 流水线中使用 24 kHz F5-TTS 风格 log-mel 特征：
 
 - 原始音频主要仍然是 16 kHz
-- 在特征提取阶段离线重采样到 24 kHz
-- 输出 100 维特征
+- 先把 recordings 离线升采样到 24 kHz
+- 再基于 24 kHz recordings 生成 raw cuts 和 100 维特征
 - 训练、解码和导出入口统一消费这套 100 维特征
 
 数据准备可以在 CPU-only 机器上完成。
@@ -57,112 +57,131 @@ mkdir -p "${EXP_ROOT}"
 bash prepare.sh --stage 1 --stop-stage 1 --cpu-only true
 ```
 
-## 5. 预处理并计算 24k 特征
+## 5. Stage 编号速查
 
-这一步使用 `local/f5tts_mel_extractor.py`。
-提取器会在内部完成 16 kHz -> 24 kHz 的重采样，并输出 100 维 log-mel 特征。
+这个 recipe 的主流程现在是：
 
-在共享实例上跑这一步之前，先确认你真正能用到的内存上限，而不只是宿主机总内存：
+| Stage | 作用 |
+| --- | --- |
+| 1 | 准备 GigaSpeech manifests |
+| 3 | 切分 `M` 的 recordings |
+| 4 | 离线升采样 DEV / TEST / `M` recordings |
+| 5 | 文本预处理并基于 recordings 生成 raw cuts |
+| 6 | 计算 DEV / TEST / `M` 的主特征 |
+| 7 | 把 `M` raw cuts 切成特征分片 |
+| 8 | 计算 `M` 分片特征 |
+| 10 | 准备 BPE |
+| 11 | 准备 phone lexicon |
 
-```bash
-free -h
-df -h /dev/shm
-cat /sys/fs/cgroup/memory.max
-cat /sys/fs/cgroup/memory.current
-cat /sys/fs/cgroup/memory.events
-```
+默认 `prepare.sh` 会跑到 stage 6。
 
-判读建议：
+## 6. 离线升采样 recordings
 
-- `free -h` 用来确认宿主机总内存和当前空闲内存。
-- `df -h /dev/shm` 用来确认共享内存大小；只有在 `--num-workers > 0` 时它才更重要。
-- `memory.max` 才是当前容器或作业真正的 cgroup 内存上限；如果它明显小于宿主机总内存，OOM kill 会先按这个上限触发。
-- `memory.events` 里如果已经出现过 `oom_kill`，说明当前会话组曾经被 cgroup OOM kill 过。
-
-结合本 recipe 的实际运行经验：
-
-- `gigaspeech_16k` 曾经在 `--stage4-num-workers 0 --stage4-batch-duration 500` 下成功跑完 `M`。
-- 同样的 `500` 对 `gigaspeech_24k` 不够稳，因为这里会在线做 `16 kHz -> 24 kHz` 重采样，且输出是 `100` 维特征，单 batch 的瞬时内存和累计主存压力都更大。
-- 在共享实例上不要让 `24k stage 4` 和 `16k stage 4` 并跑。
-
-如果目标实例确认有大约 `500 GiB` 内存和 `500 GiB` `/dev/shm`，推荐把 `24k` 的 `M` 子集特征提取放到该实例上单独跑，并使用下面的参数分层策略：
-
-- 保守首跑：`--stage4-num-workers 2 --stage4-batch-duration 150`
-- 推荐默认：`--stage4-num-workers 4 --stage4-batch-duration 200`
-- 机器稳定、监控确认内存余量仍很大后，再尝试：`--stage4-num-workers 4 --stage4-batch-duration 250`
-- 不建议一开始就回到 `--stage4-batch-duration 500`
-
-参数设计原则：
-
-- `batch-duration` 决定每批总音频秒数，是影响峰值内存的主开关，优先调它。
-- `num-workers` 只影响音频读取和 DataLoader 预取，不会改变主提特征逻辑；它带来的收益通常小于 `batch-duration` 的风险。
-- 如果首要目标是稳定，优先把 `num-workers` 控制在 `2-4`。
-- 如果当前机器是 CPU-only 机器，建议显式清空 `CUDA_VISIBLE_DEVICES`，避免错误地落到某张卡上。
-
-推荐显式执行：
+先运行 stage 3，把 `M` subset 的 recordings 分成 shards：
 
 ```bash
-python local/preprocess_gigaspeech.py --cpu-only true
-touch data/fbank/.preprocess_complete
-CUDA_VISIBLE_DEVICES='' python local/compute_fbank_gigaspeech.py \
-  --num-workers 4 \
-  --batch-duration 200
+bash prepare.sh --stage 3 --stop-stage 3 --cpu-only true
 ```
 
-等价的 stage 方式：
+然后运行 stage 4，对 DEV / TEST 和 `M` 的 recording shards 做离线升采样：
+
+```bash
+bash prepare.sh \
+  --stage 4 \
+  --stop-stage 4 \
+  --cpu-only true \
+  --resample-num-workers 24
+```
+
+单机情况下，stage 4 的主要瓶颈通常是 CPU、磁盘写入和音频解码吞吐。
+
+如果你要多实例并行，可以直接使用 helper：
+
+```bash
+./run_resample_shard.sh --instance-index 0
+./run_resample_shard.sh --instance-index 1
+./run_resample_shard.sh --instance-index 2
+./run_resample_shard.sh --instance-index 3
+```
+
+默认产物路径：
+
+- `data/manifests_resampled/24000/gigaspeech_recordings_DEV.jsonl.gz`
+- `data/manifests_resampled/24000/gigaspeech_recordings_TEST.jsonl.gz`
+- `data/manifests_resampled/24000/recordings_M_split_1000/`
+- `data/audio_cache/gigaspeech/24000/`
+
+## 7. 预处理并计算 24k 特征
+
+stage 5 会读取原始 supervisions，但在 `use_resampled_audio=true` 时改用 stage 4 生成的 24 kHz recordings 来构建 raw cuts。
+
+```bash
+bash prepare.sh --stage 5 --stop-stage 5 --cpu-only true
+```
+
+stage 6 再基于这些 raw cuts 计算 100 维 F5-TTS log-mel 特征：
 
 ```bash
 CUDA_VISIBLE_DEVICES='' bash prepare.sh \
-  --stage 3 \
-  --stop-stage 4 \
+  --stage 6 \
+  --stop-stage 6 \
   --cpu-only true \
-  --stage4-num-workers 4 \
-  --stage4-batch-duration 200
+  --feature-num-workers 4 \
+  --feature-batch-duration 200
 ```
 
-如果你要对 `M` 子集做拆分并行计算，也可以使用 `stage 5-6`，但这不是主 `M` 训练路径的必需步骤。
-
-如果你希望先用更保守的参数冒烟，再切换到推荐默认值，可以用：
+也可以一次跑完 stage 5-6：
 
 ```bash
-CUDA_VISIBLE_DEVICES='' nohup bash prepare.sh \
-  --stage 4 \
-  --stop-stage 4 \
+CUDA_VISIBLE_DEVICES='' bash prepare.sh \
+  --stage 5 \
+  --stop-stage 6 \
   --cpu-only true \
-  --stage4-num-workers 2 \
-  --stage4-batch-duration 150 \
-  > stage4_24k_cpu.log 2>&1 &
+  --feature-num-workers 4 \
+  --feature-batch-duration 200
 ```
 
-如果上面的保守配置在 `20-30` 分钟内稳定推进，且 `memory.current` 远低于 `memory.max`，再换成推荐默认值：
+参数设计原则：
 
-```bash
-CUDA_VISIBLE_DEVICES='' nohup bash prepare.sh \
-  --stage 4 \
-  --stop-stage 4 \
-  --cpu-only true \
-  --stage4-num-workers 4 \
-  --stage4-batch-duration 200 \
-  > stage4_24k_cpu.log 2>&1 &
-```
+- `feature-batch-duration` 决定每批总音频秒数，是影响峰值内存的主开关，优先调它。
+- `feature-num-workers` 影响音频读取和 DataLoader 预取；收益通常小于大 batch 带来的风险。
+- 如果首要目标是稳定，优先把 `feature-num-workers` 控制在 `2-4`。
+- 如果当前机器是 CPU-only 机器，建议显式清空 `CUDA_VISIBLE_DEVICES`，避免错误地落到某张卡上。
 
 监控建议：
 
 ```bash
-tail -f stage4_24k_cpu.log
 watch -n 10 free -h
 watch -n 10 'cat /sys/fs/cgroup/memory.current; echo; cat /sys/fs/cgroup/memory.events'
 ```
 
-## 6. 准备 BPE
+## 8. 可选：split-based M 特征计算
 
-运行 stage 8：
+如果你要把 `M` 的特征计算进一步拆分，可以使用 stage 7-8：
 
 ```bash
-bash prepare.sh --stage 8 --stop-stage 8 --cpu-only true
+bash prepare.sh \
+  --stage 7 \
+  --stop-stage 8 \
+  --cpu-only true \
+  --feature-num-splits 100 \
+  --feature-start 0 \
+  --feature-stop 25 \
+  --feature-num-workers 4 \
+  --feature-batch-duration 200
 ```
 
-## 7. 检查特征维度
+这不是主 `M` 训练路径的必需步骤。
+
+## 9. 准备 BPE
+
+运行 stage 10：
+
+```bash
+bash prepare.sh --stage 10 --stop-stage 10 --cpu-only true
+```
+
+## 10. 检查特征维度
 
 确认预计算特征是 100 维：
 
@@ -182,7 +201,7 @@ PY
 num_features = 100
 ```
 
-## 8. 训练 Zipformer
+## 11. 训练 Zipformer
 
 切换到 GPU 训练机后再执行这一步。
 
@@ -221,26 +240,7 @@ python zipformer/train.py \
   --exp-dir "${EXP_ROOT}/24k"
 ```
 
-带 W&B 的版本：
-
-```bash
-python zipformer/train.py \
-  --world-size 8 \
-  --num-epochs 30 \
-  --use-fp16 1 \
-  --subset M \
-  --enable-musan False \
-  --max-duration 700 \
-  --tensorboard True \
-  --use-wandb True \
-  --wandb-project "${WANDB_PROJECT}" \
-  --wandb-group "${WANDB_GROUP}" \
-  --wandb-run-name gsm-m-24k-f5tts \
-  --wandb-tags gigaspeech,zipformer,subset-m,no-musan,24k,f5tts-mel \
-  --exp-dir "${EXP_ROOT}/24k"
-```
-
-## 9. 解码
+## 12. 解码
 
 解码示例：
 
@@ -253,37 +253,25 @@ python zipformer/decode.py \
   --decoding-method modified_beam_search
 ```
 
-带 W&B 的版本：
-
-```bash
-python zipformer/decode.py \
-  --epoch 30 \
-  --avg 15 \
-  --exp-dir "${EXP_ROOT}/24k" \
-  --max-duration 600 \
-  --decoding-method modified_beam_search \
-  --use-wandb True \
-  --wandb-project "${WANDB_PROJECT}" \
-  --wandb-group "${WANDB_GROUP}" \
-  --wandb-run-name gsm-m-24k-f5tts \
-  --wandb-tags gigaspeech,zipformer,subset-m,no-musan,24k,f5tts-mel
-```
-
-## 10. 预期输出
+## 13. 预期输出
 
 重要输出包括：
 
+- `data/manifests_resampled/24000/`
+- `data/audio_cache/gigaspeech/24000/`
+- `data/fbank/gigaspeech_cuts_DEV.jsonl.gz`
+- `data/fbank/gigaspeech_cuts_M.jsonl.gz`
+- `data/lang_bpe_500/`
 - `${EXP_ROOT}/24k/tensorboard/`
 - `${EXP_ROOT}/24k/modified_beam_search/wer-summary-dev-*.txt`
 - `${EXP_ROOT}/24k/modified_beam_search/wer-summary-test-*.txt`
 - `${EXP_ROOT}/24k/wandb_run_id.txt`，当启用 W&B 时会生成
 - `${EXP_ROOT}/wandb_offline/`，当以离线模式记录 W&B 时会生成
 
-## 11. 备注
+## 14. 备注
 
-- `stage 5-6` 是可选的 split-based 特征计算辅助流程，不属于主 `M` 训练路径。
 - 主 Zipformer 路径默认把 `--enable-musan` 设为 `False`。
 - 在 CPU-only 机器上做预处理时，请使用 `--cpu-only true`。
+- 如果你正在从旧的“在线重采样”产物切换到新的离线升采样流程，建议先清理旧的 `data/fbank/gigaspeech_cuts_*.jsonl.gz` 和对应 feature 存储后再重跑。
 - 如果你正在和 `gigaspeech_16k` 做并行对比，建议使用同一个 W&B project/group，但把 `exp-dir` 分到不同子目录。
-- 如果要先做 smoke test，优先缩短 epoch 数、减小 `batch-duration` 或减少 `max-duration`。
 - 在可联网的实例上，可以通过 `bash sync_wandb_offline.sh` 把 `${EXP_ROOT}/wandb_offline` 里的离线 run 上传到 W&B。

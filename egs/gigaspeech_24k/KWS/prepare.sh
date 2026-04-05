@@ -26,7 +26,7 @@ if [ $stage -le 0 ] && [ $stop_stage -ge 0 ]; then
   mkdir -p data/fbank
   if [ ! -e data/fbank/.gigaspeech.done ]; then
     pushd ../ASR
-    ./prepare.sh --stage 0 --stop-stage 9
+    ./prepare.sh --stage 0 --stop-stage 10
     ./prepare.sh --stage 11 --stop-stage 11
     popd
     pushd data/fbank

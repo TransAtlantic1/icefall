@@ -19,7 +19,7 @@ set -eou pipefail
 #        - 4gram.arpa.gz
 #        - lexicon.txt
 
-. prepare.sh --stage -1 --stop-stage 9 || exit 1
+. prepare.sh --stage -1 --stop-stage 11 || exit 1
 
 stage=0
 stop_stage=100

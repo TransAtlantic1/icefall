@@ -14,14 +14,12 @@ import torchaudio
 from lhotse import AudioSource, Recording, RecordingSet
 from lhotse.serialization import load_manifest_lazy_or_eager
 
-FFMPEG_FALLBACK_RECORDING_IDS = {
-    # This audiobook is ~3 hours long. On this host, the torchaudio.load() path
-    # can trigger a native crash / OOM-like failure before Python gets a normal
-    # exception, which then shows up as BrokenProcessPool or SIGFPE in stage 4.
-    # Keep the workaround narrow: only this known problematic recording uses a
-    # streamed ffmpeg transcode; all other recordings preserve the existing path.
-    "AUD0000000444",
-}
+# Keep the ffmpeg fallback narrow: only very long OPUS recordings use it.
+# Those files are risky for the torchaudio.load() path because that path first
+# materializes the whole waveform in Python memory before resampling/saving it.
+# For multi-hour audiobook recordings, that can trigger native crashes that show
+# up as BrokenProcessPool or SIGFPE during stage 4.
+FFMPEG_FALLBACK_MIN_DURATION_SECONDS = 3600.0
 
 
 def get_args():
@@ -189,6 +187,14 @@ def transcode_with_ffmpeg(
         raise
 
 
+def should_use_ffmpeg_fallback(recording: Recording, source_path: str) -> bool:
+    source_suffix = Path(source_path).suffix.lower()
+    return (
+        source_suffix == ".opus"
+        and recording.duration >= FFMPEG_FALLBACK_MIN_DURATION_SECONDS
+    )
+
+
 def process_recording(job):
     recording, source_root, cache_root, target_sample_rate, codec, overwrite = job
     source = recording.sources[0]
@@ -219,10 +225,12 @@ def process_recording(job):
         )
 
     try:
-        if recording.id in FFMPEG_FALLBACK_RECORDING_IDS:
+        if should_use_ffmpeg_fallback(recording, source_path):
             logging.info(
-                "Using ffmpeg streaming fallback for very long recording %s",
+                "Using ffmpeg streaming fallback for long OPUS recording %s "
+                "(duration=%.1fs)",
                 recording.id,
+                recording.duration,
             )
             num_frames = transcode_with_ffmpeg(
                 source_path=source_path,

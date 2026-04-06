@@ -110,7 +110,7 @@ bash prepare.sh \
 如果你已经有一个准备好的 `egs/gigaspeech/ASR` 工作区，可以直接复用其中的 `DEV/TEST` 特征和 `lang_bpe_500`：
 
 ```bash
-export SOURCE_GIGASPEECH_ASR=/path/to/icefall/egs/gigaspeech/ASR
+export SOURCE_GIGASPEECH_ASR=/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/gigaspeech/ASR
 
 mkdir -p data/fbank
 
@@ -222,6 +222,10 @@ bash prepare.sh \
   --stop-stage 7
 ```
 
+如果你使用外部 `--data-root`，这两步都会跟随该根目录：
+- stage 2 从 `<data-root>/manifests` 管理 MUSAN manifests
+- stage 7 从 `<data-root>/manifests` 读取输入，并把特征写到 `<data-root>/fbank`
+
 ### 7.2 标准 BPE
 
 训练前通常需要跑：
@@ -328,6 +332,119 @@ num_features = 80
 
 - `stage 5-6` 只是可选辅助链路，不属于标准 `M` 训练主流程
 - datamodule 默认把 `--enable-musan` 设为 `False`
+- 如果显式传 `--data-root`，MUSAN manifests/features 也会一起落到该根目录下
 - 在 CPU-only 机器上做数据准备时，请使用 `--cpu-only true`
 - 如果本地 `k2` 构建依赖 CUDA 库，避免在 CPU-only 机器上执行 `train.py` 或 `decode.py --help`
 - 在可联网的实例上，可以通过 `bash sync_wandb_offline.sh` 把离线 W&B 记录上传
+
+## 13. 本机 Smoke 与 H200 迁移
+
+这部分只记录已经在本机实际验证过的训练启动行为，以及可以直接迁移到 `8 x H200` 的命令。
+
+### 13.1 本机已验证的事实
+
+- 本机：`2 x 48 GiB` GPU
+- 目标训练机：`8 x H200`，单卡约 `141 GiB`
+- `2 GPU + FP16 + DDP` 已确认能正常初始化并进入实际训练
+- `--num-workers 1` 在本机会触发 DataLoader bus error，本质上是 `/dev/shm` 不足，不是模型 OOM
+- 当前本地 smoke 包装脚本默认使用 `--num-workers 0`
+- 不要再用 `--print-diagnostics true` 代替 smoke。当前 `FP16 + diagnostics` 会在诊断收尾阶段因为 `torch.linalg_eigh/eig` 的 half precision 限制失败，这不代表训练本身起不来
+
+### 13.2 已实测通过的 16k 双卡 smoke
+
+推荐直接用 [run_smoke_train_offline.sh](/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/gigaspeech_16k/ASR/run_smoke_train_offline.sh)：
+
+```bash
+cd /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/gigaspeech_16k/ASR
+
+source /opt/conda/etc/profile.d/conda.sh
+conda activate icefall
+
+./run_smoke_train_offline.sh \
+  --gpus 0,1 \
+  --exp-root /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_smoke/20260405-2x48g/16k_md2000_nw0 \
+  --data-root /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/gigaspeech_16k/ASR/data \
+  --master-port 12385 \
+  --max-duration 2000 \
+  --smoke-num-batches 8 \
+  --num-workers 0 \
+  --use-fp16 1
+```
+
+本次实际结果：
+
+- `max-duration=700`：`peak_reserved_gib_max=17.896`，`avg_step_time_sec_mean=1.048`
+- `max-duration=1600`：`peak_reserved_gib_max=35.188`，`avg_step_time_sec_mean=1.778`
+- `max-duration=2000`：`peak_reserved_gib_max=43.498`，`avg_step_time_sec_mean=1.903`
+
+结论：
+
+- `2000` 在本机 `48 GiB` 卡上已经完整通过，且显存占用接近本机可用上限
+- 考虑到目标训练机是 `141 GiB` H200，且共享内存约 `1000 GiB`，如果你的部署方式是同一台 `8 x H200` 上同时跑 `16k` 和 `24k` 两个任务、每个任务各占 `4` 张卡，那么 `16k` 这个单任务首次正式启动建议直接使用 `WORLD_SIZE=4`、`MAX_DURATION=4000`、`--num-workers 4`
+
+如果你想根据 smoke summary 自动生成建议，可以运行：
+
+```bash
+python /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/gigaspeech_tools/recommend_h200_config.py \
+  /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_smoke/20260405-2x48g/16k_md2000_nw0/zipformer_m_g0-1/smoke_summary.json
+```
+
+脚本现在会同时输出：
+
+- 按显存线性缩放得到的 uncapped 建议
+- 直接可用的 `production_default`
+- 更激进但仍保守的 `production_balanced`
+
+### 13.3 直接迁移到 8 x H200 的命令
+
+这里按你的实际部署方式给命令模板，默认训练机目录结构与本机一致，实验产物统一写到 `/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_h200/`：
+
+- 同一台 `8 x H200` 上并行跑两个任务
+- `16k` 占 `GPU 0,1,2,3`
+- `24k` 占 `GPU 4,5,6,7`
+- 两个任务各自独立设置 `WORLD_SIZE=4`
+- 两个任务必须使用不同的 `MASTER_PORT` 和 `EXP_ROOT`
+
+H200 上的 `16k` 四卡 smoke：
+
+```bash
+cd /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/gigaspeech_16k/ASR
+
+CUDA_VISIBLE_DEVICES=0,1,2,3 \
+WORLD_SIZE=4 \
+MASTER_PORT=12354 \
+NUM_EPOCHS=1 \
+USE_FP16=1 \
+USE_WANDB=False \
+TENSORBOARD=False \
+DATA_ROOT=/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/gigaspeech_16k/ASR/data \
+EXP_ROOT=/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_h200/16k_smoke_g0-3 \
+SMOKE_NUM_BATCHES=8 \
+SMOKE_SKIP_VALIDATION=True \
+MAX_DURATION=4000 \
+bash launch_train_h200_offline.sh \
+  --small-dev true \
+  --num-workers 4
+```
+
+H200 上的 `16k` 四卡正式训练建议：
+
+```bash
+cd /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/gigaspeech_16k/ASR
+
+CUDA_VISIBLE_DEVICES=0,1,2,3 \
+WORLD_SIZE=4 \
+MASTER_PORT=12354 \
+NUM_EPOCHS=30 \
+USE_FP16=1 \
+MAX_DURATION=4000 \
+DATA_ROOT=/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/gigaspeech_16k/ASR/data \
+EXP_ROOT=/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_h200/16k_train_g0-3 \
+WANDB_MODE=offline \
+bash launch_train_h200_offline.sh \
+  --num-workers 4
+```
+
+如果 `16k` 这个四卡 smoke 在 `MAX_DURATION=4000` 下仍然有明显余量，再继续向 `4400-4800` 提升；如果首发就出现不稳定，再先把 `MAX_DURATION` 下调到 `3200`，不要先回退到 `2000`。
+
+如果你要和 `24k` 同机同时启动，`16k` 这边保持上面的 `GPU 0-3 / MASTER_PORT=12354`，`24k` 侧改用 `GPU 4-7 / MASTER_PORT=12364` 即可，两个任务不要共用同一个 `EXP_ROOT`。

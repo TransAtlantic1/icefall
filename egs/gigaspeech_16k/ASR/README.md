@@ -32,13 +32,34 @@ ln -sfv /path/to/GigaSpeech download/GigaSpeech
 - `k2`
 - `sentencepiece`
 - `tensorboard`
-- 重新生成 BPE 资源时需要 `jq`
+- 重新生成 BPE 资源时优先使用 `jq`；缺失时会自动回退到 Python
 - 只有在使用 `--use-wandb True` 时才需要 `wandb`
 
 ## 建议继续阅读
 
 - [RUNBOOK.md](RUNBOOK.md)：一步一步的执行说明
 - [RESULTS.md](RESULTS.md)：本 recipe 的结果记录规范和模板
+
+## 独立训练入口
+
+这个目录现在提供了可单独起跑的离线训练脚本：
+
+```bash
+bash run_train_offline.sh
+```
+
+默认行为：
+
+- 默认使用 `CUDA_VISIBLE_DEVICES=0,1,2,3`
+- 默认把实验输出写到 `../experiments/gigaspeech_16k_train`
+- 默认启用 `WANDB_MODE=offline`
+- 启动前会检查 `wandb` 可用性，以及 `DEV` 特征是否真的是 `80` 维
+
+如果你要和别的训练并跑，再显式覆盖 GPU 和端口，例如：
+
+```bash
+CUDA_VISIBLE_DEVICES=4,5,6,7 MASTER_PORT=12364 bash run_train_offline.sh
+```
 
 ## 稳定运行建议
 
@@ -62,6 +83,7 @@ bash prepare.sh \
 
 - `16k` 的 `batch-duration 500` 已经验证可用，可以作为优先推荐值。
 - `num-workers 0` 是这次成功经验的重要组成部分；它能减少 DataLoader 预取带来的额外内存和 `/dev/shm` 波动。
+- 如果你改用外部 `--data-root`，包括 MUSAN 在内的数据准备产物都会跟随该根目录。
 - 启动前仍然建议检查 `free -h`、`df -h /dev/shm`、`/sys/fs/cgroup/memory.max` 和 `/sys/fs/cgroup/memory.events`。
 - 不建议把 `16k stage 4` 和更重的 `24k stage 4` 在同一个受限 cgroup 里并跑。
 
@@ -70,3 +92,4 @@ bash prepare.sh \
 - 这个目录里的主路径是基于子集 `M` 的 `zipformer` recipe。
 - 该 recipe 可以复用另一个 GigaSpeech 工作区中的 DEV/TEST 特征和 `lang_bpe_500`，也可以在本地自行生成所需资源。
 - 如果要和 24k recipe 做并排对比，建议复用同一个 W&B project/group，并把两个实验目录放在同一个父目录下。
+- 如果需要把离线 W&B 记录回传到联网实例，可以执行 `bash sync_wandb_offline.sh`。

@@ -138,5 +138,5 @@ cat /sys/fs/cgroup/memory.events
 - 对 GigaSpeech 这类 OPUS 数据，统一前端时要特别避免 `raw -> 16k -> 24k` 这种级联重采样，优先保持 `raw -> 24k` 单次重采样。
 - `prepare.sh` 仍然保留了 `--stage4-num-workers` 和 `--stage4-batch-duration` 作为兼容参数，但新流程推荐使用 `--feature-num-workers` 和 `--feature-batch-duration`。
 - 如果要和 16k recipe 做并排对比，建议复用同一个 W&B project/group，并把两个实验目录放在同一个父目录下。
-- 目前默认的数据产物仍然写到本目录下的 `data/`，后续如果要迁移到共享存储或 `public` 目录，建议统一通过脚本参数或软链处理。
+- 目前默认的数据产物仍然写到本目录下的 `data/`；如果显式传 `--data-root`，包括 MUSAN 在内的产物都会跟随该根目录。
 - 如果需要把离线 W&B 记录回传到联网实例，可以执行 `bash sync_wandb_offline.sh`。

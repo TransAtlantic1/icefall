@@ -211,12 +211,24 @@ if [ $stage -le 8 ] && [ $stop_stage -ge 8 ]; then
     lang_dir=data/lang_bpe_${vocab_size}
     mkdir -p $lang_dir
 
-    if [ ! -f $lang_dir/transcript_words.txt ]; then
+    if [ ! -s $lang_dir/transcript_words.txt ]; then
       log "Generate data for BPE training"
-      gunzip -c "data/manifests/gigaspeech_supervisions_M.jsonl.gz" \
-        | jq '.text' \
-        | sed 's/"//g' \
-        > $lang_dir/transcript_words.txt
+      if command -v jq >/dev/null 2>&1; then
+        gunzip -c "data/manifests/gigaspeech_supervisions_M.jsonl.gz" \
+          | jq '.text' \
+          | sed 's/"//g' \
+          > $lang_dir/transcript_words.txt
+      else
+        python3 - <<'PY' > $lang_dir/transcript_words.txt
+import gzip
+import json
+
+with gzip.open("data/manifests/gigaspeech_supervisions_M.jsonl.gz", "rt") as f:
+    for line in f:
+        obj = json.loads(line)
+        print(obj["text"])
+PY
+      fi
 
       # Delete utterances with garbage meta tags
       garbage_utterance_tags="<SIL> <MUSIC> <NOISE> <OTHER>"

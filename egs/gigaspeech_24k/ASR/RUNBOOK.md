@@ -447,6 +447,10 @@ bash prepare.sh \
   --stop-stage 9
 ```
 
+如果你使用外部 `--data-root`，这两步都会跟随该根目录：
+- stage 2 从 `<data-root>/manifests` 管理 MUSAN manifests
+- stage 9 从 `<data-root>/manifests` 读取输入，并把特征写到 `<data-root>/fbank`
+
 ### 7.2 标准 BPE
 
 训练前通常需要跑：
@@ -552,3 +556,168 @@ num_features = 100
 - `stage 7-8` 可以单独承担 `M` 的特征生成；当所有 split 完成后，它会自动合并回 `data/fbank/gigaspeech_cuts_M.jsonl.gz`
 - `use_resampled_audio=true` 时，`stage 5` 会读取 `stage 4` 生成的 24 kHz recordings manifests
 - datamodule 默认把 `--enable-musan` 设为 `False`
+- 如果显式传 `--data-root`，MUSAN manifests/features 也会一起落到该根目录下
+
+## 13. 本机 Smoke 与 H200 迁移
+
+这部分只记录已经在本机实际验证过的 `24k` 启动流程，以及不污染原目录的 isolated data-root 做法。
+
+### 13.1 本机已验证的事实
+
+- 本机：`2 x 48 GiB` GPU
+- 目标训练机：`8 x H200`，单卡约 `141 GiB`
+- `24k` 训练入口要求同时具备：
+  - `data/fbank/gigaspeech_cuts_M.jsonl.gz`
+  - `data/fbank/gigaspeech_cuts_DEV.jsonl.gz`
+  - `data/lang_bpe_500/bpe.model`
+- 本次本机检查发现：原始 `24k` 目录里 `M` 已经就绪，但 `DEV/TEST` 只有 `*_raw.jsonl.gz`，缺少训练入口真正需要的 `gigaspeech_cuts_DEV/TEST.jsonl.gz`
+- 因此推荐在 scratch 目录下建立 isolated `data_root`，只读复用已有 `M` 和 manifests，再把缺失的 `DEV/TEST` 与 `lang_bpe_500` 补到 scratch 目录
+- 如果后续要启用 MUSAN，scratch `data_root` 下的 `manifests/` 和 `fbank/` 也会继续被这套流程复用，不会再回退去读仓库默认 `data/`
+
+### 13.2 不污染原目录的 24k isolated data-root
+
+下面是这次本机实际跑通的一组命令模板。为了保证训练机上可以直接复用，下面统一把 isolated data-root 放到 `/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_h200/24k_data_ready`：
+
+```bash
+cd /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/gigaspeech_24k/ASR
+
+source /opt/conda/etc/profile.d/conda.sh
+conda activate icefall
+
+ORIG_DATA=/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/gigaspeech_24k/ASR/data
+SCRATCH_DATA=/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_h200/24k_data_ready
+
+mkdir -p "${SCRATCH_DATA}/fbank" "${SCRATCH_DATA}/lang_bpe_500"
+ln -sfn "${ORIG_DATA}/manifests" "${SCRATCH_DATA}/manifests"
+ln -sfn "${ORIG_DATA}/fbank/gigaspeech_cuts_M.jsonl.gz" "${SCRATCH_DATA}/fbank/gigaspeech_cuts_M.jsonl.gz"
+ln -sfn "${ORIG_DATA}/fbank/gigaspeech_cuts_M_raw.jsonl.gz" "${SCRATCH_DATA}/fbank/gigaspeech_cuts_M_raw.jsonl.gz"
+ln -sfn "${ORIG_DATA}/fbank/gigaspeech_cuts_DEV_raw.jsonl.gz" "${SCRATCH_DATA}/fbank/gigaspeech_cuts_DEV_raw.jsonl.gz"
+ln -sfn "${ORIG_DATA}/fbank/gigaspeech_cuts_TEST_raw.jsonl.gz" "${SCRATCH_DATA}/fbank/gigaspeech_cuts_TEST_raw.jsonl.gz"
+ln -sfn "${ORIG_DATA}/fbank/gigaspeech_M_split" "${SCRATCH_DATA}/fbank/gigaspeech_M_split"
+
+bash prepare.sh \
+  --data-root "${SCRATCH_DATA}" \
+  --download-dir /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/gigaspeech_24k/ASR/download \
+  --stage 10 \
+  --stop-stage 10 \
+  --cpu-only true
+
+CUDA_VISIBLE_DEVICES='' bash prepare.sh \
+  --data-root "${SCRATCH_DATA}" \
+  --download-dir /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/gigaspeech_24k/ASR/download \
+  --stage 6 \
+  --stop-stage 6 \
+  --cpu-only true \
+  --feature-subsets DEV,TEST \
+  --feature-num-workers 0 \
+  --feature-batch-duration 60
+```
+
+执行完成后，scratch 目录里至少应有：
+
+- `fbank/gigaspeech_cuts_M.jsonl.gz`
+- `fbank/gigaspeech_cuts_DEV.jsonl.gz`
+- `fbank/gigaspeech_cuts_TEST.jsonl.gz`
+- `lang_bpe_500/bpe.model`
+
+### 13.3 已实测通过的 24k 双卡 smoke
+
+本机低负载 smoke：
+
+```bash
+./run_smoke_train_offline.sh \
+  --gpus 0,1 \
+  --exp-root /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_smoke/20260405-2x48g/24k_md200_nw0 \
+  --data-root /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_h200/24k_data_ready \
+  --master-port 12384 \
+  --max-duration 200 \
+  --smoke-num-batches 8 \
+  --num-workers 0 \
+  --use-fp16 1
+```
+
+本机更接近正式训练的 smoke：
+
+```bash
+./run_smoke_train_offline.sh \
+  --gpus 0,1 \
+  --exp-root /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_smoke/20260405-2x48g/24k_md2000_nw0 \
+  --data-root /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_h200/24k_data_ready \
+  --master-port 12387 \
+  --max-duration 2000 \
+  --smoke-num-batches 8 \
+  --num-workers 0 \
+  --use-fp16 1
+```
+
+这次实际结果：
+
+- `max-duration=200`：`peak_reserved_gib_max=5.914`，`avg_step_time_sec_mean=0.720`
+- `max-duration=1200`：`peak_reserved_gib_max=25.469`，`avg_step_time_sec_mean=1.129`
+- `max-duration=2000`：`peak_reserved_gib_max=42.494`，`avg_step_time_sec_mean=1.742`
+
+结论：
+
+- `2000` 在本机 `48 GiB` 卡上也已经完整通过，且显存占用接近本机可用上限
+- 考虑到目标训练机是 `141 GiB` H200，且共享内存约 `1000 GiB`，如果你的部署方式是同一台 `8 x H200` 上同时跑 `16k` 和 `24k` 两个任务、每个任务各占 `4` 张卡，那么 `24k` 这个单任务首次正式启动建议直接使用 `WORLD_SIZE=4`、`MAX_DURATION=4000`、`--num-workers 4`
+
+如果你想根据 smoke summary 自动生成建议，可以运行：
+
+```bash
+python /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/gigaspeech_tools/recommend_h200_config.py \
+  /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_smoke/20260405-2x48g/24k_md2000_nw0/zipformer_m_g0-1/smoke_summary.json
+```
+
+### 13.4 直接迁移到 8 x H200 的命令
+
+这里按你的实际部署方式给命令模板，默认训练机目录结构与本机一致，实验产物统一写到 `/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_h200/`：
+
+- 同一台 `8 x H200` 上并行跑两个任务
+- `16k` 占 `GPU 0,1,2,3`
+- `24k` 占 `GPU 4,5,6,7`
+- 两个任务各自独立设置 `WORLD_SIZE=4`
+- 两个任务必须使用不同的 `MASTER_PORT` 和 `EXP_ROOT`
+
+H200 上的 `24k` 四卡 smoke：
+
+```bash
+cd /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/gigaspeech_24k/ASR
+
+CUDA_VISIBLE_DEVICES=4,5,6,7 \
+WORLD_SIZE=4 \
+MASTER_PORT=12364 \
+NUM_EPOCHS=1 \
+USE_FP16=1 \
+USE_WANDB=False \
+TENSORBOARD=False \
+DATA_ROOT=/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_h200/24k_data_ready \
+EXP_ROOT=/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_h200/24k_smoke_g4-7 \
+SMOKE_NUM_BATCHES=8 \
+SMOKE_SKIP_VALIDATION=True \
+MAX_DURATION=4000 \
+bash launch_train_h200_offline.sh \
+  --small-dev true \
+  --num-workers 4
+```
+
+H200 上的 `24k` 四卡正式训练建议：
+
+```bash
+cd /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/gigaspeech_24k/ASR
+
+CUDA_VISIBLE_DEVICES=4,5,6,7 \
+WORLD_SIZE=4 \
+MASTER_PORT=12364 \
+NUM_EPOCHS=30 \
+USE_FP16=1 \
+MAX_DURATION=4000 \
+DATA_ROOT=/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_h200/24k_data_ready \
+EXP_ROOT=/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_h200/24k_train_g4-7 \
+WANDB_MODE=offline \
+bash launch_train_h200_offline.sh \
+  --num-workers 4
+```
+
+如果 `24k` 这个四卡 smoke 在 `MAX_DURATION=4000` 下仍然有明显余量，再继续向 `4400-4800` 提升；如果首发就出现不稳定，再先把 `MAX_DURATION` 下调到 `3200`，不要先回退到 `2000`。
+
+如果你要和 `16k` 同机同时启动，`24k` 这边保持上面的 `GPU 4-7 / MASTER_PORT=12364`，`16k` 侧改用 `GPU 0-3 / MASTER_PORT=12354` 即可，两个任务不要共用同一个 `EXP_ROOT`。

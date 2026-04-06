@@ -18,9 +18,9 @@
 
 """
 This file computes fbank features of the musan dataset.
-It looks for manifests in the directory data/manifests.
+By default, it looks for manifests in the directory data/manifests.
 
-The generated fbank features are saved in data/fbank.
+The generated fbank features are saved in data/fbank by default.
 """
 import argparse
 import logging
@@ -55,9 +55,12 @@ def is_cut_long(c: MonoCut) -> bool:
 
 
 def compute_fbank_musan(
-    num_mel_bins: int = 80, whisper_fbank: bool = False, output_dir: str = "data/fbank"
+    num_mel_bins: int = 80,
+    whisper_fbank: bool = False,
+    manifest_dir: str = "data/manifests",
+    output_dir: str = "data/fbank",
 ):
-    src_dir = Path("data/manifests")
+    src_dir = Path(manifest_dir)
     output_dir = Path(output_dir)
     num_jobs = min(15, os.cpu_count())
 
@@ -132,6 +135,12 @@ def get_args():
         help="Use WhisperFbank instead of Fbank. Default: False.",
     )
     parser.add_argument(
+        "--manifest-dir",
+        type=str,
+        default="data/manifests",
+        help="Input manifest directory. Default: data/manifests.",
+    )
+    parser.add_argument(
         "--output-dir",
         type=str,
         default="data/fbank",
@@ -148,5 +157,6 @@ if __name__ == "__main__":
     compute_fbank_musan(
         num_mel_bins=args.num_mel_bins,
         whisper_fbank=args.whisper_fbank,
+        manifest_dir=args.manifest_dir,
         output_dir=args.output_dir,
     )

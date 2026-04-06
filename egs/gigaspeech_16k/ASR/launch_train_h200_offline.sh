@@ -32,14 +32,14 @@ fi
 
 export PYTHONPATH="${icefall_root}:${PYTHONPATH:-}"
 
-exp_root_default="$(cd -- "${icefall_root}/.." && pwd)/experiments/gigaspeech_24k_train"
+exp_root_default="$(cd -- "${icefall_root}/.." && pwd)/experiments/gigaspeech_16k_train"
 export EXP_ROOT="${EXP_ROOT:-${exp_root_default}}"
-export WANDB_PROJECT="${WANDB_PROJECT:-gigaspeech-24k}"
+export WANDB_PROJECT="${WANDB_PROJECT:-gigaspeech-16k}"
 export WANDB_GROUP="${WANDB_GROUP:-zipformer-m}"
 export WANDB_MODE="${WANDB_MODE:-offline}"
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3}"
 export WORLD_SIZE="${WORLD_SIZE:-4}"
-export MASTER_PORT="${MASTER_PORT:-12364}"
+export MASTER_PORT="${MASTER_PORT:-12354}"
 export DATA_ROOT="$(resolve_path "${DATA_ROOT:-data}")"
 export FBANK_DIR="$(resolve_path "${FBANK_DIR:-${DATA_ROOT}/fbank}")"
 export BPE_MODEL="$(resolve_path "${BPE_MODEL:-${DATA_ROOT}/lang_bpe_500/bpe.model}")"
@@ -49,8 +49,8 @@ export SMOKE_SKIP_VALIDATION="${SMOKE_SKIP_VALIDATION:-True}"
 gpu_tag="$(printf "%s" "${CUDA_VISIBLE_DEVICES}" | tr ',' '-')"
 export EXP_DIR="${EXP_DIR:-${EXP_ROOT}/zipformer_m_g${gpu_tag}}"
 export WANDB_DIR="${WANDB_DIR:-${EXP_ROOT}/wandb_offline}"
-export WANDB_RUN_NAME="${WANDB_RUN_NAME:-gsm-m-24k-zipformer-g${gpu_tag}}"
-export WANDB_TAGS="${WANDB_TAGS:-gigaspeech,zipformer,subset-m,no-musan,24k,f5tts-mel}"
+export WANDB_RUN_NAME="${WANDB_RUN_NAME:-gsm-m-16k-zipformer-g${gpu_tag}}"
+export WANDB_TAGS="${WANDB_TAGS:-gigaspeech,zipformer,subset-m,no-musan,16k,fbank}"
 
 mkdir -p "${EXP_DIR}" "${WANDB_DIR}"
 
@@ -67,12 +67,11 @@ for required_path in \
 do
   if [[ ! -e "${required_path}" ]]; then
     echo "Missing required input: ${required_path}" >&2
-    echo "Finish 24k data preparation before starting training." >&2
     exit 1
   fi
 done
 
-FBANK_DIR="${FBANK_DIR}" EXPECTED_FEATURE_DIM=100 python - <<'PY'
+FBANK_DIR="${FBANK_DIR}" EXPECTED_FEATURE_DIM=80 python - <<'PY'
 from lhotse import load_manifest_lazy
 import os
 
@@ -80,8 +79,8 @@ cuts = load_manifest_lazy(os.path.join(os.environ["FBANK_DIR"], "gigaspeech_cuts
 first = next(iter(cuts))
 expected_dim = int(os.environ["EXPECTED_FEATURE_DIM"])
 if first.num_features != expected_dim:
-    raise SystemExit(f"Expected {expected_dim}-dim features for 24k, got {first.num_features}")
-print(f"Validated 24k feature dim: {first.num_features}")
+    raise SystemExit(f"Expected {expected_dim}-dim features for 16k, got {first.num_features}")
+print(f"Validated 16k feature dim: {first.num_features}")
 PY
 
 if is_truthy "${USE_WANDB:-True}"; then

@@ -111,11 +111,17 @@ def get_args():
         default=parse_subsets("DEV,TEST,M"),
         help="Comma-separated subsets to process, e.g. DEV,TEST or DEV,TEST,M.",
     )
+    parser.add_argument(
+        "--fbank-dir",
+        type=Path,
+        default=Path("data/fbank"),
+        help="Directory containing raw cut manifests and output feature artifacts.",
+    )
     return parser.parse_args()
 
 
 def compute_fbank_gigaspeech(args):
-    in_out_dir = Path("data/fbank")
+    in_out_dir = args.fbank_dir
 
     device = torch.device("cpu")
     if torch.cuda.is_available():

@@ -75,3 +75,56 @@ python zipformer/decode.py \
 - `egs/gigaspeech_16k/ASR/RESULTS.md`
 
 除非这些结果在本目录下重新跑过，或者已经明确验证过适用于本目录，否则不要直接复制到这里。
+
+## 本机 smoke 结果
+
+### zipformer 2x48G local smoke
+
+- 日期：2026-04-06
+- 训练子集：`M`
+- 特征类型：`24k F5-TTS log-mel`
+- 特征维度：`100`
+- MUSAN：`False`
+- 机器：`2 x 48 GiB GPU`
+- 目标迁移机器：`8 x H200`，单卡约 `141 GiB`
+- 统一设置：`FP16`，`smoke_num_batches=8`，`small-dev=true`
+
+这次本机先修复了训练入口依赖：
+
+- 原始 `24k` 目录里 `gigaspeech_cuts_M.jsonl.gz` 已存在
+- 但 `gigaspeech_cuts_DEV.jsonl.gz` 和 `gigaspeech_cuts_TEST.jsonl.gz` 缺失，只剩 `*_raw.jsonl.gz`
+- `lang_bpe_500/bpe.model` 也需要在 scratch `data_root` 下补齐
+- 因此最终采用 isolated `data_root`，只读复用原始 manifests 与 `M` cuts，再在 scratch 目录生成 `DEV/TEST` 和 `lang_bpe_500`
+
+已通过的本机 smoke：
+
+| max-duration | num-workers | peak reserved / GPU | avg step time | 实验目录 |
+|--------------|-------------|---------------------|---------------|----------|
+| 200 | 0 | 5.914 GiB | 0.720 s | `/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_smoke/20260405-2x48g/24k_md200_nw0` |
+| 1200 | 0 | 25.469 GiB | 1.129 s | `/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_smoke/20260405-2x48g/24k_md1200_nw0` |
+| 2000 | 0 | 42.494 GiB | 1.742 s | `/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_smoke/20260405-2x48g/24k_md2000_nw0` |
+
+推荐的 H200 直接起训配置：
+
+- `WORLD_SIZE=8`
+- `USE_FP16=1`
+- `MAX_DURATION=2000`
+- `--num-workers 0`
+
+本次用于正式训练迁移校准的命令：
+
+```bash
+cd /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/gigaspeech_24k/ASR
+source /opt/conda/etc/profile.d/conda.sh
+conda activate icefall
+
+./run_smoke_train_offline.sh \
+  --gpus 0,1 \
+  --exp-root /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_smoke/20260405-2x48g/24k_md2000_nw0 \
+  --data-root /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_smoke/20260405-2x48g/24k_data_ready \
+  --master-port 12387 \
+  --max-duration 2000 \
+  --smoke-num-batches 8 \
+  --num-workers 0 \
+  --use-fp16 1
+```

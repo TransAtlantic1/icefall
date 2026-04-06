@@ -59,6 +59,18 @@ def get_args():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument(
+        "--manifest-dir",
+        type=Path,
+        default=Path("data/manifests"),
+        help="Input directory containing the original GigaSpeech manifests.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("data/fbank"),
+        help="Output directory for raw cut manifests.",
+    )
+    parser.add_argument(
         "--cpu-only",
         type=str2bool,
         default=False,
@@ -67,9 +79,7 @@ def get_args():
     return parser.parse_args()
 
 
-def preprocess_gigaspeech():
-    src_dir = Path("data/manifests")
-    output_dir = Path("data/fbank")
+def preprocess_gigaspeech(src_dir: Path, output_dir: Path):
     output_dir.mkdir(exist_ok=True)
 
     dataset_parts = (
@@ -133,7 +143,7 @@ def main():
     if not args.cpu_only:
         from icefall.utils import str2bool as _icefall_str2bool  # noqa: F401
 
-    preprocess_gigaspeech()
+    preprocess_gigaspeech(src_dir=args.manifest_dir, output_dir=args.output_dir)
 
 
 if __name__ == "__main__":

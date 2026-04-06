@@ -69,11 +69,17 @@ def get_args():
         default=1000.0,
         help="The maximum number of audio seconds in a batch.",
     )
+    parser.add_argument(
+        "--fbank-dir",
+        type=Path,
+        default=Path("data/fbank"),
+        help="Directory containing raw cut manifests and output feature artifacts.",
+    )
     return parser.parse_args()
 
 
 def compute_fbank_gigaspeech(args):
-    in_out_dir = Path("data/fbank")
+    in_out_dir = args.fbank_dir
 
     subsets = (
         "DEV",

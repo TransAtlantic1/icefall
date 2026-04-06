@@ -94,13 +94,18 @@ def get_args():
         default=-1,
         help="Stop processing pieces until this number (exclusive).",
     )
+    parser.add_argument(
+        "--split-dir",
+        type=Path,
+        default=Path("data/fbank/gigaspeech_M_split"),
+        help="Directory containing split raw cuts and output feature artifacts.",
+    )
     return parser.parse_args()
 
 
 def compute_fbank_gigaspeech_splits(args):
     num_splits = args.num_splits
-    output_dir = "data/fbank/gigaspeech_M_split"
-    output_dir = Path(output_dir)
+    output_dir = args.split_dir
     assert output_dir.exists(), f"{output_dir} does not exist!"
 
     start = args.start

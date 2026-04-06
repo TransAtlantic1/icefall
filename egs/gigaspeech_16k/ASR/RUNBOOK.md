@@ -346,6 +346,7 @@ num_features = 80
 - 本机：`2 x 48 GiB` GPU
 - 目标训练机：`8 x H200`，单卡约 `141 GiB`
 - `2 GPU + FP16 + DDP` 已确认能正常初始化并进入实际训练
+- `H200 + 4 GPU + FP16 + DDP + --num-workers 4 + MAX_DURATION=4000` 已完成 `8` 个 batch 的 smoke，并写出完整 `smoke_summary.json`
 - `--num-workers 1` 在本机会触发 DataLoader bus error，本质上是 `/dev/shm` 不足，不是模型 OOM
 - 当前本地 smoke 包装脚本默认使用 `--num-workers 0`
 - 不要再用 `--print-diagnostics true` 代替 smoke。当前 `FP16 + diagnostics` 会在诊断收尾阶段因为 `torch.linalg_eigh/eig` 的 half precision 限制失败，这不代表训练本身起不来
@@ -382,6 +383,22 @@ conda activate icefall
 - `2000` 在本机 `48 GiB` 卡上已经完整通过，且显存占用接近本机可用上限
 - 考虑到目标训练机是 `141 GiB` H200，且共享内存约 `1000 GiB`，如果你的部署方式是同一台 `8 x H200` 上同时跑 `16k` 和 `24k` 两个任务、每个任务各占 `4` 张卡，那么 `16k` 这个单任务首次正式启动建议直接使用 `WORLD_SIZE=4`、`MAX_DURATION=4000`、`--num-workers 4`
 
+H200 四卡 smoke 的实际结果：
+
+- 目录：[16k_smoke_g0-3](/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_h200/16k_smoke_g0-3)
+- summary：[smoke_summary.json](/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_h200/16k_smoke_g0-3/zipformer_m_g0-1-2-3/smoke_summary.json)
+- `completed_batches_min=max=8`
+- `peak_reserved_gib_max=103.248`
+- `peak_allocated_gib_max=53.011`
+- `avg_step_time_sec_mean=2.251`
+- 训练机侧现场观察到的峰值显存约为 `125814 / 143771 MiB`
+
+最终建议：
+
+- `16k` 正式训练直接从 `MAX_DURATION=4000`、`--num-workers 4` 起跑
+- 这已经验证可起，且显存余量不算宽松；在 `16k/24k` 同机并行的前提下，不建议首发继续上调到 `4400-4800`
+- 如果正式训练仍然稳定，后续再单独评估是否只对 `16k` 小幅上调
+
 如果你想根据 smoke summary 自动生成建议，可以运行：
 
 ```bash
@@ -412,7 +429,7 @@ cd /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/giga
 
 CUDA_VISIBLE_DEVICES=0,1,2,3 \
 WORLD_SIZE=4 \
-MASTER_PORT=12354 \
+MASTER_PORT=12364 \
 NUM_EPOCHS=1 \
 USE_FP16=1 \
 USE_WANDB=False \
@@ -432,19 +449,29 @@ H200 上的 `16k` 四卡正式训练建议：
 ```bash
 cd /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/gigaspeech_16k/ASR
 
-CUDA_VISIBLE_DEVICES=0,1,2,3 \
-WORLD_SIZE=4 \
-MASTER_PORT=12354 \
-NUM_EPOCHS=30 \
-USE_FP16=1 \
-MAX_DURATION=4000 \
-DATA_ROOT=/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/gigaspeech_16k/ASR/data \
-EXP_ROOT=/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_h200/16k_train_g0-3 \
-WANDB_MODE=offline \
-bash launch_train_h200_offline.sh \
-  --num-workers 4
+EXP_ROOT=/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/experiments/gigaspeech_h200/16k_train_g0-3
+mkdir -p "${EXP_ROOT}"
+
+nohup env \
+  CUDA_VISIBLE_DEVICES=0,1,2,3 \
+  WORLD_SIZE=4 \
+  MASTER_PORT=12384 \
+  NUM_EPOCHS=30 \
+  USE_FP16=1 \
+  MAX_DURATION=4000 \
+  LOG_INTERVAL=50 \
+  VALID_INTERVAL=500 \
+  DATA_ROOT=/inspire/hdd/project/emb
+  odied-multimodality/chenxie-25019/fj/icefall/egs/gigaspeech_16k/ASR/data \
+  EXP_ROOT="${EXP_ROOT}" \
+  WANDB_MODE=offline \
+  bash launch_train_h200_offline.sh \
+    --num-workers 4 \
+  > "${EXP_ROOT}/launch.log" 2>&1 &
+
+tail -f "${EXP_ROOT}/launch.log"
 ```
 
-如果 `16k` 这个四卡 smoke 在 `MAX_DURATION=4000` 下仍然有明显余量，再继续向 `4400-4800` 提升；如果首发就出现不稳定，再先把 `MAX_DURATION` 下调到 `3200`，不要先回退到 `2000`。
+这次 `16k` 四卡 H200 smoke 已经证明 `MAX_DURATION=4000` 可用。按你现在的双任务并行部署方式，正式训练先固定在这个值，不建议首发继续上调；如果后续正式训练出现不稳定，再先把 `MAX_DURATION` 下调到 `3200`，不要先回退到 `2000`。
 
 如果你要和 `24k` 同机同时启动，`16k` 这边保持上面的 `GPU 0-3 / MASTER_PORT=12354`，`24k` 侧改用 `GPU 4-7 / MASTER_PORT=12364` 即可，两个任务不要共用同一个 `EXP_ROOT`。

@@ -52,7 +52,9 @@ It supports training with:
 
 import argparse
 import copy
+import json
 import logging
+import time
 import warnings
 from pathlib import Path
 from shutil import copyfile
@@ -103,6 +105,7 @@ from icefall.utils import (
 LRSchedulerType = Union[torch.optim.lr_scheduler._LRScheduler, optim.LRScheduler]
 
 WANDB_RUN_ID_FILENAME = "wandb_run_id.txt"
+SMOKE_SUMMARY_FILENAME = "smoke_summary.json"
 WANDB_RECIPE_CONFIG = {
     "recipe": "gigaspeech_24k",
     "feature_type": "f5tts_mel",
@@ -189,6 +192,37 @@ def setup_wandb(params: AttributeDict, rank: int) -> Optional[Any]:
     )
     run_id_path.write_text(f"{run.id}\n")
     return run
+
+
+def write_smoke_rank_summary(exp_dir: Path, rank: int, summary: Dict[str, Any]) -> Path:
+    summary_path = exp_dir / f"smoke_summary.rank{rank}.json"
+    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+    return summary_path
+
+
+def aggregate_smoke_summaries(exp_dir: Path, world_size: int) -> Dict[str, Any]:
+    rank_summaries = []
+    for rank in range(world_size):
+        summary_path = exp_dir / f"smoke_summary.rank{rank}.json"
+        if not summary_path.is_file():
+            raise FileNotFoundError(f"Missing smoke summary: {summary_path}")
+        rank_summaries.append(json.loads(summary_path.read_text()))
+
+    aggregate = {
+        "recipe": WANDB_RECIPE_CONFIG["recipe"],
+        "world_size": world_size,
+        "requested_batches": rank_summaries[0]["requested_batches"],
+        "completed_batches_min": min(s["completed_batches"] for s in rank_summaries),
+        "completed_batches_max": max(s["completed_batches"] for s in rank_summaries),
+        "peak_allocated_gib_max": max(s["peak_allocated_gib"] for s in rank_summaries),
+        "peak_reserved_gib_max": max(s["peak_reserved_gib"] for s in rank_summaries),
+        "avg_step_time_sec_mean": sum(s["avg_step_time_sec"] for s in rank_summaries)
+        / len(rank_summaries),
+        "ranks": rank_summaries,
+    }
+    summary_path = exp_dir / SMOKE_SUMMARY_FILENAME
+    summary_path.write_text(json.dumps(aggregate, indent=2, sort_keys=True) + "\n")
+    return aggregate
 
 
 def set_batch_count(model: Union[nn.Module, DDP], batch_count: float) -> None:
@@ -598,12 +632,36 @@ def get_parser():
             model_avg * ((batch_idx_train - average_period) / batch_idx_train)`.
         """,
     )
+    parser.add_argument(
+        "--log-interval",
+        type=int,
+        default=50,
+        help="Log training metrics every this many global training steps.",
+    )
+    parser.add_argument(
+        "--valid-interval",
+        type=int,
+        default=500,
+        help="Run validation every this many global training steps.",
+    )
 
     parser.add_argument(
         "--use-fp16",
         type=str2bool,
         default=False,
         help="Whether to use half precision training.",
+    )
+    parser.add_argument(
+        "--smoke-num-batches",
+        type=int,
+        default=0,
+        help="If positive, run this many training batches and then exit cleanly.",
+    )
+    parser.add_argument(
+        "--smoke-skip-validation",
+        type=str2bool,
+        default=True,
+        help="Skip validation while running --smoke-num-batches.",
     )
 
     add_model_arguments(parser)
@@ -638,11 +696,11 @@ def get_params() -> AttributeDict:
                            contains number of batches trained so far across
                            epochs.
 
-        - log_interval:  Print training loss if batch_idx % log_interval` is 0
+        - log_interval:  Print training loss if global batch index % log_interval` is 0
 
         - reset_interval: Reset statistics if batch_idx % reset_interval is 0
 
-        - valid_interval:  Run validation if batch_idx % valid_interval is 0
+        - valid_interval:  Run validation if global batch index % valid_interval is 0
 
         - feature_dim: The model input dim. It has to match the one used
                        in computing features.
@@ -663,9 +721,9 @@ def get_params() -> AttributeDict:
             "best_train_epoch": -1,
             "best_valid_epoch": -1,
             "batch_idx_train": 0,
-            "log_interval": 500,
+            "log_interval": 50,
             "reset_interval": 2000,
-            "valid_interval": 20000,
+            "valid_interval": 500,
             # parameters for zipformer
             "feature_dim": 100,
             "subsampling_factor": 4,  # not passed in, this is fixed.
@@ -1027,7 +1085,7 @@ def train_one_epoch(
     wandb_run: Optional[Any] = None,
     world_size: int = 1,
     rank: int = 0,
-) -> None:
+) -> Optional[Dict[str, Any]]:
     """Train the model for one epoch.
 
     The training loss from the mean of all frames is saved in
@@ -1062,6 +1120,8 @@ def train_one_epoch(
     model.train()
 
     tot_loss = MetricsTracker()
+    completed_batches = 0
+    step_durations: List[float] = []
 
     saved_bad_model = False
 
@@ -1079,6 +1139,7 @@ def train_one_epoch(
         )
 
     for batch_idx, batch in enumerate(train_dl):
+        step_start = time.perf_counter()
         if batch_idx % 10 == 0:
             set_batch_count(model, get_adjusted_batch_count(params))
 
@@ -1110,6 +1171,9 @@ def train_one_epoch(
             display_and_save_batch(batch, params=params, sp=sp)
             raise
 
+        completed_batches += 1
+        step_durations.append(time.perf_counter() - step_start)
+
         if params.print_diagnostics and batch_idx == 5:
             return
 
@@ -1127,6 +1191,7 @@ def train_one_epoch(
         if (
             params.batch_idx_train > 0
             and params.batch_idx_train % params.save_every_n == 0
+            and not params.is_smoke_run
         ):
             save_checkpoint_with_global_batch_idx(
                 out_dir=params.exp_dir,
@@ -1163,9 +1228,14 @@ def train_one_epoch(
                 save_bad_model()
                 raise_grad_scale_is_too_small_error(cur_grad_scale)
 
-        if batch_idx % params.log_interval == 0:
+        if params.batch_idx_train % params.log_interval == 0:
             cur_lr = max(scheduler.get_last_lr())
             cur_grad_scale = scaler._scale.item() if params.use_fp16 else 1.0
+            max_memory_allocated_mb = 0
+            if torch.cuda.is_available():
+                max_memory_allocated_mb = (
+                    torch.cuda.max_memory_allocated() // 1000000
+                )
 
             logging.info(
                 f"Epoch {params.cur_epoch}, "
@@ -1188,9 +1258,21 @@ def train_one_epoch(
                     tb_writer.add_scalar(
                         "train/grad_scale", cur_grad_scale, params.batch_idx_train
                     )
+                tb_writer.add_scalar(
+                    "train/batch_size", batch_size, params.batch_idx_train
+                )
+                tb_writer.add_scalar(
+                    "train/max_memory_allocated_mb",
+                    max_memory_allocated_mb,
+                    params.batch_idx_train,
+                )
             log_wandb_scalars(
                 wandb_run,
-                {"train/learning_rate": cur_lr},
+                {
+                    "train/learning_rate": cur_lr,
+                    "train/batch_size": batch_size,
+                    "train/max_memory_allocated_mb": max_memory_allocated_mb,
+                },
                 step=params.batch_idx_train,
             )
             log_wandb_metrics(
@@ -1212,7 +1294,32 @@ def train_one_epoch(
                     step=params.batch_idx_train,
                 )
 
-        if batch_idx % params.valid_interval == 0 and not params.print_diagnostics:
+        if params.is_smoke_run and completed_batches >= params.smoke_num_batches:
+            peak_allocated = 0.0
+            peak_reserved = 0.0
+            if torch.cuda.is_available():
+                peak_allocated = torch.cuda.max_memory_allocated() / (1024**3)
+                peak_reserved = torch.cuda.max_memory_reserved() / (1024**3)
+            return {
+                "rank": rank,
+                "world_size": world_size,
+                "requested_batches": params.smoke_num_batches,
+                "completed_batches": completed_batches,
+                "max_duration": params.max_duration,
+                "avg_step_time_sec": sum(step_durations) / len(step_durations),
+                "peak_allocated_gib": round(peak_allocated, 3),
+                "peak_reserved_gib": round(peak_reserved, 3),
+                "use_fp16": bool(params.use_fp16),
+                "device": str(torch.cuda.current_device())
+                if torch.cuda.is_available()
+                else "cpu",
+            }
+
+        if (
+            params.batch_idx_train % params.valid_interval == 0
+            and not params.print_diagnostics
+            and not (params.is_smoke_run and params.smoke_skip_validation)
+        ):
             logging.info("Computing validation loss")
             valid_info = compute_validation_loss(
                 params=params,
@@ -1236,12 +1343,43 @@ def train_one_epoch(
                 "train/valid_",
                 step=params.batch_idx_train,
             )
+            log_wandb_scalars(
+                wandb_run,
+                {
+                    "train/valid_max_memory_allocated_mb": torch.cuda.max_memory_allocated()
+                    // 1000000
+                    if torch.cuda.is_available()
+                    else 0
+                },
+                step=params.batch_idx_train,
+            )
+
+    if params.is_smoke_run:
+        peak_allocated = 0.0
+        peak_reserved = 0.0
+        if torch.cuda.is_available():
+            peak_allocated = torch.cuda.max_memory_allocated() / (1024**3)
+            peak_reserved = torch.cuda.max_memory_reserved() / (1024**3)
+        avg_step_time = sum(step_durations) / len(step_durations) if step_durations else 0.0
+        return {
+            "rank": rank,
+            "world_size": world_size,
+            "requested_batches": params.smoke_num_batches,
+            "completed_batches": completed_batches,
+            "max_duration": params.max_duration,
+            "avg_step_time_sec": avg_step_time,
+            "peak_allocated_gib": round(peak_allocated, 3),
+            "peak_reserved_gib": round(peak_reserved, 3),
+            "use_fp16": bool(params.use_fp16),
+            "device": str(torch.cuda.current_device()) if torch.cuda.is_available() else "cpu",
+        }
 
     loss_value = tot_loss["loss"] / tot_loss["frames"]
     params.train_loss = loss_value
     if params.train_loss < params.best_train_loss:
         params.best_train_epoch = params.cur_epoch
         params.best_train_loss = params.train_loss
+    return None
 
 
 def run(rank, world_size, args):
@@ -1258,6 +1396,10 @@ def run(rank, world_size, args):
     """
     params = get_params()
     params.update(vars(args))
+    params.is_smoke_run = params.smoke_num_batches > 0
+
+    if params.is_smoke_run and params.print_diagnostics:
+        raise ValueError("--smoke-num-batches cannot be combined with --print-diagnostics")
 
     fix_random_seed(params.seed)
     if world_size > 1:
@@ -1313,6 +1455,8 @@ def run(rank, world_size, args):
     if world_size > 1:
         logging.info("Using DDP")
         model = DDP(model, device_ids=[rank], find_unused_parameters=True)
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
 
     optimizer = ScaledAdam(
         get_parameter_groups_with_lrs(model, lr=params.base_lr, include_names=True),
@@ -1405,7 +1549,7 @@ def run(rank, world_size, args):
 
         params.cur_epoch = epoch
 
-        train_one_epoch(
+        smoke_summary = train_one_epoch(
             params=params,
             model=model,
             model_avg=model_avg,
@@ -1420,6 +1564,23 @@ def run(rank, world_size, args):
             world_size=world_size,
             rank=rank,
         )
+
+        if params.is_smoke_run:
+            assert smoke_summary is not None
+            rank_summary_path = write_smoke_rank_summary(params.exp_dir, rank, smoke_summary)
+            logging.info("Smoke summary written to %s", rank_summary_path)
+            if world_size > 1:
+                torch.distributed.barrier()
+            if rank == 0:
+                aggregate = aggregate_smoke_summaries(params.exp_dir, world_size)
+                logging.info(
+                    "Smoke run completed: peak_reserved_gib_max=%.3f, avg_step_time_sec_mean=%.3f",
+                    aggregate["peak_reserved_gib_max"],
+                    aggregate["avg_step_time_sec_mean"],
+                )
+            if world_size > 1:
+                torch.distributed.barrier()
+            break
 
         if params.print_diagnostics:
             diagnostic.print_diagnostics()
@@ -1445,6 +1606,8 @@ def run(rank, world_size, args):
         wandb_run.summary["train/best_train_epoch"] = params.best_train_epoch
         wandb_run.summary["train/best_valid_epoch"] = params.best_valid_epoch
         wandb_run.summary["train/final_batch_idx"] = params.batch_idx_train
+        if params.is_smoke_run:
+            wandb_run.summary["train/smoke_num_batches"] = params.smoke_num_batches
         wandb_run.finish()
 
     if world_size > 1:

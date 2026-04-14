@@ -26,13 +26,13 @@
 所有命令都在下面目录执行：
 
 ```bash
-cd /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/emilia_24k/ASR
+cd /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/emilia_24k_multilang/emilia_24k_ZH/ASR
 ```
 
 推荐把常用环境变量合并成下面这一段，直接复制即可：
 
 ```bash
-cd /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/emilia_24k/ASR
+cd /inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/emilia_24k_multilang/emilia_24k_ZH/ASR
 source /opt/conda/etc/profile.d/conda.sh
 conda activate icefall
 export PYTHONPATH=/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall${PYTHONPATH:+:$PYTHONPATH}
@@ -41,6 +41,7 @@ export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
 export PUBLIC_ROOT=/inspire/qb-ilm/project/embodied-multimodality/chenxie-25019/public
 export DATASET_ROOT=/inspire/dataset/emilia/fc71e07
 export ARTIFACT_ROOT=$PUBLIC_ROOT/emilia/fc71e07/icefall_emilia_zh_24k
+export ORCH_ARTIFACT_ROOT=/inspire/qb-ilm/project/embodied-multimodality/chenxie-25019/icefall_emilia_zh_24k
 export EMILIA_ARTIFACT_ROOT=$ARTIFACT_ROOT
 export LANGUAGE=zh
 ```
@@ -51,11 +52,17 @@ export LANGUAGE=zh
 PUBLIC_ROOT=/inspire/qb-ilm/project/embodied-multimodality/chenxie-25019/public
 DATASET_ROOT=/inspire/dataset/emilia/fc71e07
 ARTIFACT_ROOT=$PUBLIC_ROOT/emilia/fc71e07/icefall_emilia_zh_24k
+ORCH_ARTIFACT_ROOT=/inspire/qb-ilm/project/embodied-multimodality/chenxie-25019/icefall_emilia_zh_24k
 EMILIA_ARTIFACT_ROOT=$ARTIFACT_ROOT
 LANG=zh
 ```
 
 在这个布局下，`prepare.sh`、`run_public_resample_shard.sh`、`zipformer/train.py`、`zipformer/decode.py`、`zipformer/export.py` 的默认输入/输出路径都已经对齐到这组路径；不传对应参数时就会直接使用这里的默认值。
+
+补充说明：
+- 新增的 [run_public_stage4_9.sh](/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/emilia_24k_multilang/emilia_24k_ZH/ASR/run_public_stage4_9.sh) 默认把 `artifact_root` 指到新盘根目录 `ORCH_ARTIFACT_ROOT`
+- [prepare.sh](/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/emilia_24k_multilang/emilia_24k_ZH/ASR/prepare.sh) 自身默认值这次没有改，仍是 `PUBLIC_ROOT/emilia/fc71e07/...` 这套布局
+- 所以下面的手工命令如果想走新盘，继续显式传 `--artifact-root "$ORCH_ARTIFACT_ROOT"` 即可
 
 在这个布局下：
 - 原始 32 kHz 音频保留在 `$DATASET_ROOT/ZH`
@@ -286,6 +293,7 @@ $ARTIFACT_ROOT/locks/resample/$LANG/24000/recordings_train_split_1000
 - 如果目标 output manifest 已存在，整个 shard 会直接跳过
 - 如果某个 shard 正好在迁移瞬间被别的机器抢到，共享盘锁会让后来的 worker 跳过该 shard，避免撞写
 
+### 4.4 stage 4
 完成后继续跑 stage 4：
 
 ```bash
@@ -297,7 +305,7 @@ bash prepare.sh \
   --stop-stage 4
 ```
 
-### 4.4 Stage 4 的 supervision 时长修正
+### 4.5 Stage 4 的 supervision 时长修正
 
 `emilia_24k_multilang/emilia_24k_ZH` 的 stage 4 现在包含一个额外的 manifest 修正步骤，原因是本地 `fc71e07` 副本里，JSONL 的 `duration` 和真实音频解码时长并不总是完全一致。
 
@@ -408,31 +416,20 @@ bash prepare.sh \
 
 ### 6.2 Stage 7：CPU 多实例分片跑法
 
-Stage 7 可以完全在 CPU 上跑。这个 recipe 提供了 [run_public_cpu_feature_shard.sh](/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/emilia_24k/ASR/run_public_cpu_feature_shard.sh)，固定执行 stage 7，并自动根据 `--instance-index` 和 `--num-instances` 计算 `feature_start/feature_stop`。它也支持 `--detach true`，会自动用 `nohup` 后台运行。
+Stage 7 可以完全在 CPU 上跑。这个 recipe 提供了 [run_public_cpu_feature_shard.sh](/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/emilia_24k_multilang/emilia_24k_ZH/ASR/run_public_cpu_feature_shard.sh)，固定执行 stage 7，并自动根据 `--instance-index` 和 `--num-instances` 计算 `feature_start/feature_stop`。它也支持 `--detach true`，会自动用 `nohup` 后台运行。
 
 9 机器示例：
 
 ```bash
 ./run_public_cpu_feature_shard.sh --instance-index 0 --num-instances 9 --detach true
 ./run_public_cpu_feature_shard.sh --instance-index 1 --num-instances 9 --detach true
-./run_public_cpu_feature_shard.sh --instance-index 2 --num-instances 9 --detach true
-./run_public_cpu_feature_shard.sh --instance-index 3 --num-instances 9 --detach true
-./run_public_cpu_feature_shard.sh --instance-index 4 --num-instances 9 --detach true
-./run_public_cpu_feature_shard.sh --instance-index 5 --num-instances 9 --detach true
-./run_public_cpu_feature_shard.sh --instance-index 6 --num-instances 9 --detach true
-./run_public_cpu_feature_shard.sh --instance-index 7 --num-instances 9 --detach true
+...
 ./run_public_cpu_feature_shard.sh --instance-index 8 --num-instances 9 --detach true
 ```
 
 如果 `feature_num_splits=100` 且 `num_instances=9`，区间是：
 - worker 0：`[0, 12)`
-- worker 1：`[12, 24)`
-- worker 2：`[24, 36)`
-- worker 3：`[36, 48)`
-- worker 4：`[48, 60)`
-- worker 5：`[60, 72)`
-- worker 6：`[72, 84)`
-- worker 7：`[84, 96)`
+- ...
 - worker 8：`[96, 100)`
 
 每个实例会生成两类日志：
@@ -460,26 +457,113 @@ bash prepare.sh \
   --feature-batch-duration 300
 ```
 
-Worker 1：
+
+按同样方式继续覆盖全部 `train_split_<N>` shards。
+
+### 6.4 Stage 4-10：1 台主机 + 8 台子机统合跑法
+
+如果你要把 `stage 4-10` 统合成“一台主机串行推进、八台子机并行处理 stage 7”的共享盘流程，直接使用 [run_public_stage4_9.sh](/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/emilia_24k_multilang/emilia_24k_ZH/ASR/run_public_stage4_9.sh)。
+
+这条链路的关键行为是：
+- host 固定负责 `stage 4 -> 5 -> 6`
+- 进入 `stage 7` 前，host 会先扫描当前还没完成的 train split shards
+- host 按剩余 raw shard manifest 文件大小做一轮均匀分配，给每个 worker id 写出自己的 shardlist
+- host 在分配期间一直持有 `stage7/assignment.lock`，只有 shardlist 全部写完才会放开
+- worker 只能在锁释放后读取自己的 shardlist，再调用 `prepare.sh --stage 7 --feature-shard-list ...`
+- stage 7 全部完成后，host 会继续跑 `stage 8 -> 9 -> 10`
+- 所有阶段都带自动重试，默认 `max_attempts=3`；像短暂磁盘配额异常、挂载抖动这类失败，修复后直接重拉同一个 `run-id` 即可续跑
+- 如果你这次只想停在 `stage 9`，显式加 `--run-stage10 false`
+
+推荐这条统合链路单独使用新盘根目录：
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 \
-bash prepare.sh \
-  --language "$LANG" \
+export ORCH_ARTIFACT_ROOT=/inspire/qb-ilm/project/embodied-multimodality/chenxie-25019/icefall_emilia_zh_24k
+```
+
+host 启动示例：
+
+```bash
+./run_public_stage4_9.sh \
+  --role host \
+  --artifact-root "$ORCH_ARTIFACT_ROOT" \
   --dataset-root "$DATASET_ROOT" \
-  --artifact-root "$ARTIFACT_ROOT" \
-  --stage 7 \
-  --stop-stage 7 \
-  --feature-start 25 \
-  --feature-stop 50 \
+  --feature-num-splits 100 \
+  --num-stage7-workers 8 \
+  --feature-device cpu \
+  --feature-num-workers 0 \
+  --feature-batch-duration 300
+```
+
+8 台 CPU worker 示例：
+
+```bash
+./run_public_stage4_9.sh --role worker --worker-index 0 --artifact-root "$ORCH_ARTIFACT_ROOT" --dataset-root "$DATASET_ROOT" --feature-num-splits 100 --num-stage7-workers 8 --feature-device cpu --feature-num-workers 0 --feature-batch-duration 300
+./run_public_stage4_9.sh --role worker --worker-index 1 --artifact-root "$ORCH_ARTIFACT_ROOT" --dataset-root "$DATASET_ROOT" --feature-num-splits 100 --num-stage7-workers 8 --feature-device cpu --feature-num-workers 0 --feature-batch-duration 300
+./run_public_stage4_9.sh --role worker --worker-index 2 --artifact-root "$ORCH_ARTIFACT_ROOT" --dataset-root "$DATASET_ROOT" --feature-num-splits 100 --num-stage7-workers 8 --feature-device cpu --feature-num-workers 0 --feature-batch-duration 300
+./run_public_stage4_9.sh --role worker --worker-index 3 --artifact-root "$ORCH_ARTIFACT_ROOT" --dataset-root "$DATASET_ROOT" --feature-num-splits 100 --num-stage7-workers 8 --feature-device cpu --feature-num-workers 0 --feature-batch-duration 300
+./run_public_stage4_9.sh --role worker --worker-index 4 --artifact-root "$ORCH_ARTIFACT_ROOT" --dataset-root "$DATASET_ROOT" --feature-num-splits 100 --num-stage7-workers 8 --feature-device cpu --feature-num-workers 0 --feature-batch-duration 300
+./run_public_stage4_9.sh --role worker --worker-index 5 --artifact-root "$ORCH_ARTIFACT_ROOT" --dataset-root "$DATASET_ROOT" --feature-num-splits 100 --num-stage7-workers 8 --feature-device cpu --feature-num-workers 0 --feature-batch-duration 300
+./run_public_stage4_9.sh --role worker --worker-index 6 --artifact-root "$ORCH_ARTIFACT_ROOT" --dataset-root "$DATASET_ROOT" --feature-num-splits 100 --num-stage7-workers 8 --feature-device cpu --feature-num-workers 0 --feature-batch-duration 300
+./run_public_stage4_9.sh --role worker --worker-index 7 --artifact-root "$ORCH_ARTIFACT_ROOT" --dataset-root "$DATASET_ROOT" --feature-num-splits 100 --num-stage7-workers 8 --feature-device cpu --feature-num-workers 0 --feature-batch-duration 300
+```
+
+如果某些 worker 是 GPU 机器，只要在各自机器上额外设好 `CUDA_VISIBLE_DEVICES`，并把 `--feature-device` 留成 `auto` 即可：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 \
+./run_public_stage4_9.sh \
+  --role worker \
+  --worker-index 0 \
+  --artifact-root "$ORCH_ARTIFACT_ROOT" \
+  --dataset-root "$DATASET_ROOT" \
+  --feature-num-splits 100 \
+  --num-stage7-workers 8 \
   --feature-device auto \
   --feature-num-workers 0 \
   --feature-batch-duration 300
 ```
 
-按同样方式继续覆盖全部 `train_split_<N>` shards。
+这条统一链路的共享状态目录是：
 
-### 6.4 Stage 4-10 一口气纯 CPU 跑完
+```text
+$ORCH_ARTIFACT_ROOT/orchestration/stage4_9/$LANG
+```
+
+常用状态文件：
+- 当前 run id：`current_run_id`
+- stage 7 锁：`runs/<run_id>/stage7/assignment.lock`
+- 当前分配代次：`runs/<run_id>/stage7/current_generation`
+- 每个 worker 的 shardlist：`runs/<run_id>/stage7/generations/gen-*/worker-<id>.shards.txt`
+- 每个 worker 的 done / failed / heartbeat：`runs/<run_id>/stage7/generations/gen-*/worker-<id>.{done,failed,heartbeat}`
+
+日志默认写到：
+- host 日志：`$ORCH_ARTIFACT_ROOT/logs/stage4_9/<run_id>/host.log`
+- worker 日志：`$ORCH_ARTIFACT_ROOT/logs/stage4_9/<run_id>/worker.<id>.log`
+- 每次自动重试的细日志：`$ORCH_ARTIFACT_ROOT/logs/stage4_9/<run_id>/attempts/...`
+
+失败恢复原则：
+- 直接用同一个 `run-id` 重拉 host 或 worker，不要换新的 `run-id`
+- host 重启时会先检查当前代次有没有活跃 worker；如果没有，就重新扫描剩余 shards，再生成下一代 shardlists
+- worker 每次只读取自己当前 generation 下的 shardlist，不会去抢别人的 shard
+
+### 6.5 只跑到 Stage 9
+
+如果你只想让这条统合链路停在 `stage 9`：
+
+```bash
+./run_public_stage4_9.sh \
+  --role host \
+  --artifact-root "$ORCH_ARTIFACT_ROOT" \
+  --dataset-root "$DATASET_ROOT" \
+  --feature-num-splits 100 \
+  --num-stage7-workers 8 \
+  --feature-device cpu \
+  --feature-num-workers 0 \
+  --feature-batch-duration 300 \
+  --run-stage10 false
+```
+
+### 6.6 Stage 4-10 一口气纯 CPU 跑完
 
 如果你想在 CPU 机器上从 raw cuts 一路跑到 train 特征结束：
 

@@ -39,6 +39,7 @@ batch_duration=1000
 feature_num_splits=""
 feature_start=""
 feature_stop=""
+feature_shard_list=""
 feature_num_workers=""
 feature_batch_duration=""
 feature_device="auto"
@@ -322,16 +323,65 @@ if [ $stage -le 7 ] && [ $stop_stage -ge 7 ]; then
     exit 1
   fi
 
-  total_feature_splits=${#raw_paths[@]}
-  if [ "$feature_stop" -lt "$feature_start" ]; then
-    feature_stop="$total_feature_splits"
-  fi
-  if [ "$feature_stop" -gt "$total_feature_splits" ]; then
-    feature_stop="$total_feature_splits"
+  selected_raw_paths=()
+  if [ -n "$feature_shard_list" ]; then
+    if [ ! -f "$feature_shard_list" ]; then
+      echo "$0: Missing feature shard list ${feature_shard_list}"
+      exit 1
+    fi
+
+    declare -A raw_path_by_idx=()
+    declare -A raw_path_by_num=()
+    for raw_path in "${raw_paths[@]}"; do
+      file_name=$(basename "$raw_path")
+      idx="${file_name#${prefix}_cuts_train_raw.}"
+      idx="${idx%.jsonl.gz}"
+      raw_path_by_idx["$idx"]="$raw_path"
+      raw_path_by_num["$((10#$idx))"]="$raw_path"
+    done
+
+    mapfile -t requested_shards < <(
+      sed -e 's/[[:space:]]*#.*$//' -e '/^[[:space:]]*$/d' "$feature_shard_list"
+    )
+    if [ ${#requested_shards[@]} -eq 0 ]; then
+      log "Stage 7: feature_shard_list=${feature_shard_list} is empty, nothing to do"
+    else
+      declare -A seen_requested_shards=()
+      for shard_id in "${requested_shards[@]}"; do
+        if [[ ! "$shard_id" =~ ^[0-9]+$ ]]; then
+          echo "$0: Invalid shard id '${shard_id}' in ${feature_shard_list}"
+          exit 1
+        fi
+
+        normalized_shard_id=$(printf '%d' "$((10#$shard_id))")
+        if [ -n "${seen_requested_shards[$normalized_shard_id]+x}" ]; then
+          continue
+        fi
+        seen_requested_shards["$normalized_shard_id"]=1
+
+        raw_path="${raw_path_by_idx[$shard_id]:-${raw_path_by_num[$normalized_shard_id]:-}}"
+        if [ -z "$raw_path" ]; then
+          echo "$0: Shard ${shard_id} from ${feature_shard_list} does not exist in ${train_feature_split_dir}"
+          exit 1
+        fi
+        selected_raw_paths+=("$raw_path")
+      done
+    fi
+  else
+    total_feature_splits=${#raw_paths[@]}
+    if [ "$feature_stop" -lt "$feature_start" ]; then
+      feature_stop="$total_feature_splits"
+    fi
+    if [ "$feature_stop" -gt "$total_feature_splits" ]; then
+      feature_stop="$total_feature_splits"
+    fi
+
+    for ((i=feature_start; i<feature_stop; ++i)); do
+      selected_raw_paths+=("${raw_paths[$i]}")
+    done
   fi
 
-  for ((i=feature_start; i<feature_stop; ++i)); do
-    raw_path="${raw_paths[$i]}"
+  for raw_path in "${selected_raw_paths[@]}"; do
     file_name=$(basename "$raw_path")
     idx="${file_name#${prefix}_cuts_train_raw.}"
     idx="${idx%.jsonl.gz}"

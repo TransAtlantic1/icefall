@@ -66,6 +66,7 @@ import sentencepiece as spm
 import torch
 import torch.multiprocessing as mp
 import torch.nn as nn
+import yaml
 from asr_datamodule import EmiliaAsrDataModule
 from decoder import Decoder
 from joiner import Joiner
@@ -476,6 +477,16 @@ def get_parser():
     )
 
     parser.add_argument(
+        "--config",
+        type=str,
+        default="",
+        help=(
+            "Optional YAML config file. Values in the config are used as parser "
+            "defaults, and explicit command-line flags still take precedence."
+        ),
+    )
+
+    parser.add_argument(
         "--world-size",
         type=int,
         default=1,
@@ -762,6 +773,41 @@ def get_parser():
     add_model_arguments(parser)
 
     return parser
+
+
+def apply_yaml_config(
+    parser: argparse.ArgumentParser, config_path: Union[str, Path]
+) -> None:
+    config_path = Path(config_path)
+    if not config_path.is_file():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+
+    with config_path.open("r", encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+
+    if config is None:
+        return
+    if not isinstance(config, dict):
+        raise ValueError(
+            f"Config file {config_path} must contain a flat YAML mapping."
+        )
+
+    valid_dests = {action.dest for action in parser._actions}
+    normalized: Dict[str, Any] = {}
+    unknown_keys = []
+    for key, value in config.items():
+        normalized_key = str(key).replace("-", "_")
+        if normalized_key not in valid_dests:
+            unknown_keys.append(str(key))
+            continue
+        normalized[normalized_key] = value
+
+    if unknown_keys:
+        raise ValueError(
+            f"Unknown config keys in {config_path}: {', '.join(sorted(unknown_keys))}"
+        )
+
+    parser.set_defaults(**normalized)
 
 
 def get_params() -> AttributeDict:
@@ -1679,6 +1725,10 @@ def scan_pessimistic_batches_for_oom(
 def main():
     parser = get_parser()
     EmiliaAsrDataModule.add_arguments(parser)
+    initial_args, _ = parser.parse_known_args()
+    if initial_args.config:
+        apply_yaml_config(parser, initial_args.config)
+
     args = parser.parse_args()
     args = normalize_emilia_args(args)
 

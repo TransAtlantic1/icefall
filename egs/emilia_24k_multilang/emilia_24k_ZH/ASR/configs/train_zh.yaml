@@ -1,0 +1,31 @@
+# Command-line flags still override values from this file.
+
+language: zh
+artifact_root: /inspire/hdd/project/embodied-multimodality/public/emilia/fc71e07/icefall_emilia_zh_24k
+dataset_root: /inspire/dataset/emilia/fc71e07
+
+world_size: 8
+num_epochs: 30
+start_epoch: 1
+start_batch: 0
+
+max_duration: 1000
+ref_duration: 600
+
+base_lr: 0.045
+lr_batches: 7500
+lr_epochs: 1
+
+use_fp16: true
+tensorboard: true
+use_wandb: true
+
+wandb_project: emilia-asr
+wandb_group: zh-compare
+wandb_run_name: emilia-zh-24k-f5tts
+wandb_tags: emilia,24k,f5tts-mel
+wandb_resume: allow
+
+save_every_n: 8000
+keep_last_k: 30
+average_period: 200

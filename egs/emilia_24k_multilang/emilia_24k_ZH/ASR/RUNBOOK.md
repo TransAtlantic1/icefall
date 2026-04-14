@@ -17,6 +17,7 @@
 - 默认 stage 4 会优先使用这些 resampled manifests 生成 raw cuts
 - 默认批量 `zipformer/decode.py` 消费的是预计算好的 `24 kHz` 特征
 - 如果后续补在线取波形入口，也应继续保持 `raw source -> 24 kHz` 单次重采样
+- 当前 stage 4 会在生成 raw cuts 前，先把 normalized supervisions 按 recordings 的真实时长顺序流式对齐，并裁掉任何 `supervision.end > recording.duration` 的条目
 
 `prepare_data.sh` 只是兼容性包装脚本，内部会直接转发到 `prepare.sh`。
 
@@ -101,6 +102,11 @@ LANG=zh
 - `feature_device=auto`
 
 `local/compute_fbank_emilia.py` 使用的特征提取器是 `local/f5tts_mel_extractor.py`，训练特征维度在 `zipformer/train.py` 中固定为 100。
+
+补充说明：
+- 当前仓库内的默认命令、runbook 示例和 `prepare.sh` 默认值都走 `use_resampled_audio=true`
+- 也就是说，recipe 当前主链路会先做 stage 3 离线重采样，再让后续 raw cuts 和特征提取消费 `24 kHz` 缓存
+- stage 4 现在会在生成 raw cuts 前，先把 normalized supervisions 按 recordings 的真实时长顺序流式对齐，并裁掉任何 `supervision.end > recording.duration` 的条目
 
 ## 3. 按 Stage 与设备划分的运行方式
 
@@ -281,6 +287,39 @@ $ARTIFACT_ROOT/locks/resample/$LANG/24000/recordings_train_split_1000
 - 如果某个 shard 正好在迁移瞬间被别的机器抢到，共享盘锁会让后来的 worker 跳过该 shard，避免撞写
 
 完成后继续跑 stage 4：
+
+```bash
+bash prepare.sh \
+  --language "$LANG" \
+  --dataset-root "$DATASET_ROOT" \
+  --artifact-root "$ARTIFACT_ROOT" \
+  --stage 4 \
+  --stop-stage 4
+```
+
+### 4.4 Stage 4 的 supervision 时长修正
+
+`emilia_24k_multilang/emilia_24k_ZH` 的 stage 4 现在包含一个额外的 manifest 修正步骤，原因是本地 `fc71e07` 副本里，JSONL 的 `duration` 和真实音频解码时长并不总是完全一致。
+
+典型现象是：
+- `prepare_emilia.py` 早期生成的 supervision 时长直接继承 JSONL 里的 `duration`
+- stage 3 的 resampled recording manifest 则使用真实 `num_frames / sample_rate`
+- 两边只要有毫秒以下的微小差异，就可能在 raw cuts 阶段触发 `supervision_end > cut.duration`
+
+当前修复后的 stage 4 行为是：
+- 先做文本归一化
+- 再把归一化后的 supervisions 和 recordings 顺序对齐
+- 如果 `supervision.end > recording.duration`，就把 supervision 裁到 recording 末尾
+- 如果 supervision 起点已经晚于 recording 末尾，直接丢弃该条 supervision
+
+修正后的中间产物会写到：
+- `$ARTIFACT_ROOT/data/fbank/<lang>/emilia_<lang>_supervisions_<split>_norm_fixed.jsonl.gz`
+
+如果你之前在这次修复之前已经生成过 old raw cuts，需要注意：
+- 至少重跑一次 `stage 4`，让 `*_cuts_{train,dev,test}_raw.jsonl.gz` 用新的修正逻辑重建
+- 如果 `stage 5` 或 `stage 7` 也已经基于旧 raw cuts 生成过特征 cuts，还需要删除对应旧输出后再重跑这些阶段，因为脚本会跳过已存在文件
+
+最小重跑命令：
 
 ```bash
 bash prepare.sh \
@@ -567,6 +606,63 @@ python zipformer/train.py \
   --wandb-group "${LANG}-compare" \
   --wandb-run-name "emilia-${LANG}-24k-f5tts"
 ```
+
+### 9.1 两种 step 口径
+
+训练里要区分两种不同的“step”：
+
+1. 原始 step
+   - 就是 `batch_idx_train`
+   - 表示“优化器一共更新了多少步”
+   - 不关心每一步里装了多少音频时长
+
+2. 按时长折算后的 step
+   - 来自：
+
+```python
+def get_adjusted_batch_count(params):
+    return (
+        params.batch_idx_train
+        * (params.max_duration * params.world_size)
+        / params.ref_duration
+    )
+```
+
+   - 表示“如果每一步都按参考时长 `ref_duration` 在训练，那当前等价于训练了多少步”
+
+直观理解：
+
+- `max_duration=4000` 的单步比 `max_duration=1000` 更“重”
+- 虽然 `md4000` 的原始 step 更少，但每一步处理的数据更多
+- 所以 `md4000` 的 `250` 步，可能已经接近 `md1000` 的 `1000` 步总数据量
+
+模型内部很多 `ScheduledFloat` 会通过 `set_batch_count(model, get_adjusted_batch_count(params))` 使用这个“按时长折算后的 step”，因此它们更接近按**累计数据量**在调度。
+
+但优化器学习率 scheduler `Eden` 用的仍是原始 `batch_idx_train`。因此：
+
+- 内部模型 schedule 更接近按数据量对齐
+- lr schedule 却仍按原始 step 数对齐
+
+这也是为什么改 `max_duration` 时，不能只看 batch size 和显存，还要一起看 lr scheduler。
+
+### 9.2 `max_duration` 调整的实际含义
+
+当前推荐标准配置是：
+
+- 训练：`--max-duration 1000`
+- 解码：`--max-duration 600`
+
+如果把训练从 `1000` 放大到 `4000`，通常会发生：
+
+- 单步 batch 变大
+- `steps/epoch` 大约缩小到 `1/4`
+- `Eden` 的 `warmup_batches` 和 `lr_batches` 在数据尺度上被拉长
+
+所以对 `md4000` 这类大 batch 配置，不要默认沿用 `md1000` 的 scheduler 参数。至少要重新评估：
+
+- `base_lr`
+- `lr_batches`
+- `warmup_batches`（当前代码里不是 CLI 参数，如需精细控制需要改代码）
 
 ## 10. 解码
 

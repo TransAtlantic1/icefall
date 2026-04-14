@@ -2,7 +2,9 @@
 
 language: zh
 artifact_root: /inspire/hdd/project/embodied-multimodality/public/emilia/fc71e07/icefall_emilia_zh_24k
-dataset_root: /inspire/dataset/emilia/fc71e07
+manifest_dir: /inspire/hdd/project/embodied-multimodality/public/emilia/fc71e07/icefall_emilia_zh_24k/data/fbank/zh
+lang_dir: /inspire/hdd/project/embodied-multimodality/public/emilia/fc71e07/icefall_emilia_zh_24k/data/lang_hybrid_zh
+exp_dir: /inspire/hdd/project/embodied-multimodality/public/emilia/fc71e07/icefall_emilia_zh_24k/exp/zipformer/emilia-zh-24k-h200-md1000
 
 world_size: 8
 num_epochs: 30
@@ -11,6 +13,15 @@ start_batch: 0
 
 max_duration: 1000
 ref_duration: 600
+num_workers: 4
+num_buckets: 30
+bucketing_sampler: true
+shuffle: true
+drop_last: true
+concatenate_cuts: false
+enable_spec_aug: true
+enable_musan: false
+transcript_source: raw_text
 
 base_lr: 0.045
 lr_batches: 7500
@@ -21,9 +32,9 @@ tensorboard: true
 use_wandb: true
 
 wandb_project: emilia-asr
-wandb_group: zh-compare
-wandb_run_name: emilia-zh-24k-f5tts
-wandb_tags: emilia,24k,f5tts-mel
+wandb_group: zh-h200
+wandb_run_name: emilia-zh-24k-h200-md1000
+wandb_tags: emilia,zh,24k,h200,hybrid,md1000
 wandb_resume: allow
 
 save_every_n: 8000

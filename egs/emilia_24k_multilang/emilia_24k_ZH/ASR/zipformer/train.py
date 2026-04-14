@@ -56,6 +56,7 @@ import logging
 import os
 import sys
 import warnings
+from datetime import datetime
 from pathlib import Path
 from shutil import copyfile
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -140,8 +141,11 @@ def get_language_defaults(
     )
     data_root = artifact_root / "data"
     exp_root = artifact_root / "exp" / "zipformer"
-    vocab_size = 2000 if language == "zh" else 500
-    lang_dir = data_root / f"lang_bpe_{language}_{vocab_size}"
+    if language == "zh":
+        lang_dir = data_root / "lang_hybrid_zh"
+    else:
+        vocab_size = 500
+        lang_dir = data_root / f"lang_bpe_{language}_{vocab_size}"
     return {
         "manifest_dir": data_root / "fbank",
         "lang_dir": lang_dir,
@@ -149,6 +153,21 @@ def get_language_defaults(
         "tokens": lang_dir / "tokens.txt",
         "exp_dir": exp_root / f"exp-{language}-24k",
     }
+
+
+def is_resume_requested(args: argparse.Namespace) -> bool:
+    return getattr(args, "start_batch", 0) > 0 or getattr(args, "start_epoch", 1) > 1
+
+
+def create_fresh_run_exp_dir(base_exp_dir: Union[str, Path]) -> Path:
+    base_exp_dir = Path(base_exp_dir)
+    timestamp = datetime.now().strftime("run-%Y%m%d-%H%M%S")
+    candidate = base_exp_dir / timestamp
+    suffix = 1
+    while candidate.exists():
+        candidate = base_exp_dir / f"{timestamp}-{suffix:02d}"
+        suffix += 1
+    return candidate
 
 
 def normalize_emilia_args(args: argparse.Namespace) -> argparse.Namespace:
@@ -172,6 +191,8 @@ def normalize_emilia_args(args: argparse.Namespace) -> argparse.Namespace:
     args.exp_dir = Path(
         defaults["exp_dir"] if getattr(args, "exp_dir", None) in (None, "") else args.exp_dir
     )
+    if getattr(args, "auto_exp_subdir", True) and not is_resume_requested(args):
+        args.exp_dir = create_fresh_run_exp_dir(args.exp_dir)
     args.bpe_model = str(
         defaults["bpe_model"]
         if getattr(args, "bpe_model", None) in (None, "")
@@ -590,6 +611,16 @@ def get_parser():
         files, e.g., checkpoints, log, etc, are saved
         """,
     )
+    parser.add_argument(
+        "--auto-exp-subdir",
+        type=str2bool,
+        default=True,
+        help=(
+            "When enabled and this is a fresh run (start-epoch=1 and start-batch=0), "
+            "create a timestamped child directory under --exp-dir automatically. "
+            "Resume runs keep the provided exp-dir unchanged."
+        ),
+    )
 
     parser.add_argument(
         "--bpe-model",
@@ -611,7 +642,8 @@ def get_parser():
         help=(
             "Optional root for Emilia 24k artifacts outside the repo. "
             "When set, manifest-dir defaults to <artifact-root>/data/fbank, "
-            "lang-dir defaults to <artifact-root>/data/lang_bpe_<lang>_<vocab>, "
+            "lang-dir defaults to <artifact-root>/data/lang_hybrid_zh for zh "
+            "and <artifact-root>/data/lang_bpe_<lang>_<vocab> otherwise, "
             "and exp-dir defaults to <artifact-root>/exp/zipformer/exp-<lang>-24k. "
             "If omitted, EMILIA_ARTIFACT_ROOT is used when available; otherwise "
             "the recipe defaults to /inspire/qb-ilm/project/embodied-multimodality/"
@@ -1731,6 +1763,7 @@ def main():
 
     args = parser.parse_args()
     args = normalize_emilia_args(args)
+    print(f"Resolved exp_dir: {args.exp_dir}", flush=True)
 
     world_size = args.world_size
     assert world_size >= 1

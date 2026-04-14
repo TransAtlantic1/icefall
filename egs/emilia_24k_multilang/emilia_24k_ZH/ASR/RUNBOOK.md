@@ -634,7 +634,8 @@ bash prepare.sh \
 - `$ARTIFACT_ROOT/data/manifests_resampled/<lang>/24000/...`
 - `$ARTIFACT_ROOT/data/fbank/<lang>/emilia_<lang>_cuts_{dev,test,train}.jsonl.gz`
 - `$ARTIFACT_ROOT/data/fbank/<lang>/train_split_<N>/emilia_<lang>_cuts_train.*.jsonl.gz`
-- `$ARTIFACT_ROOT/data/lang_bpe_<lang>_<vocab_size>/`
+- `zh`：`$ARTIFACT_ROOT/data/lang_hybrid_zh/`
+- `en`：`$ARTIFACT_ROOT/data/lang_bpe_en_<vocab_size>/`
 
 训练时可以读取：
 - 合并后的 train cuts：`$ARTIFACT_ROOT/data/fbank/<lang>/emilia_<lang>_cuts_train.jsonl.gz`
@@ -643,8 +644,22 @@ bash prepare.sh \
 ## 9. 训练
 
 默认实验目录：
-- zh：`$ARTIFACT_ROOT/exp/zipformer/exp-zh-24k`
-- en：`$ARTIFACT_ROOT/exp/zipformer/exp-en-24k`
+- zh 基目录：`$ARTIFACT_ROOT/exp/zipformer/emilia-zh-24k-h200-md1000`
+- en 基目录：`$ARTIFACT_ROOT/exp/zipformer/exp-en-24k`
+
+`zipformer/train.py` 现在默认开启 `--auto-exp-subdir true`：
+
+- fresh run：如果 `--start-epoch 1` 且 `--start-batch 0`，会在 `--exp-dir` 下自动创建一个时间戳子目录，例如：
+  `$ARTIFACT_ROOT/exp/zipformer/emilia-zh-24k-h200-md1000/run-20260414-143000`
+- resume run：如果设置了 `--start-epoch > 1` 或 `--start-batch > 0`，则不会再自动创建子目录，而是直接使用你传入的 `--exp-dir`
+
+这样做的目的，是让每次 fresh run 都拥有自己的：
+
+- checkpoints
+- TensorBoard 日志
+- `wandb_run_id.txt`
+
+从而避免不同实验自动续到同一个 W&B run。
 
 推荐的 8 卡训练方式，TensorBoard 和 W&B 写到同一个共享项目：
 
@@ -657,6 +672,7 @@ python zipformer/train.py \
   --world-size 8 \
   --language "$LANG" \
   --artifact-root "$ARTIFACT_ROOT" \
+  --exp-dir "$ARTIFACT_ROOT/exp/zipformer/emilia-${LANG}-24k-h200-md1000" \
   --num-epochs 30 \
   --start-epoch 1 \
   --use-fp16 1 \
@@ -669,10 +685,18 @@ python zipformer/train.py \
   --wandb-tags "emilia,24k,f5tts-mel"
 ```
 
+fresh run 的实际 `exp_dir` 会在启动时打印成：
+
+```text
+Resolved exp_dir: <actual_child_dir>
+```
+
+后续恢复训练时请使用这个具体子目录，而不是只传上面的基目录。
+
 TensorBoard 日志写入：
 
 ```text
-$ARTIFACT_ROOT/exp/zipformer/exp-<lang>-24k/tensorboard
+$ARTIFACT_ROOT/exp/zipformer/emilia-<lang>-24k-h200-md1000/run-*/tensorboard
 ```
 
 恢复训练：
@@ -682,6 +706,7 @@ python zipformer/train.py \
   --world-size 8 \
   --language "$LANG" \
   --artifact-root "$ARTIFACT_ROOT" \
+  --exp-dir "$ACTUAL_EXP_DIR" \
   --start-epoch 11 \
   --use-fp16 1 \
   --max-duration 1000 \
@@ -690,6 +715,11 @@ python zipformer/train.py \
   --wandb-group "${LANG}-compare" \
   --wandb-run-name "emilia-${LANG}-24k-f5tts"
 ```
+
+其中：
+
+- `ACTUAL_EXP_DIR` 指的是上一次 fresh run 打印出来的实际子目录
+- 不要在 resume 时只传基目录 `.../emilia-zh-24k-h200-md1000`，否则找不到对应 checkpoint
 
 ### 9.1 两种 step 口径
 

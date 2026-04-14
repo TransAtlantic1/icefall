@@ -5,7 +5,7 @@ export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
 set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-ICEFALL_ROOT=$(cd -- "${SCRIPT_DIR}/../../.." && pwd)
+ICEFALL_ROOT=$(cd -- "${SCRIPT_DIR}/../../../.." && pwd)
 PARSE_OPTIONS_SH="${ICEFALL_ROOT}/icefall/shared/parse_options.sh"
 
 stage=0
@@ -46,6 +46,9 @@ feature_device="auto"
 
 target_sample_rate=24000
 use_resampled_audio=true
+# For the local fc71e07 Emilia copy, source audio is not uniformly 32 kHz.
+# Keep this enabled unless you have separately verified the exact source
+# sample-rate distribution for the subset you are processing.
 speed_perturb=false
 enable_musan=false
 
@@ -108,12 +111,17 @@ train_feature_split_dir="${fbank_dir}/train_split_${feature_num_splits}"
 cache_dir="${audio_cache_root}/emilia/${language}"
 input_audio_sampling_rate=$target_sample_rate
 if [ "$use_resampled_audio" = false ]; then
+  # Warning: this fallback assumes a uniform 32 kHz source distribution.
+  # That assumption is false for the local fc71e07 copy, which contains
+  # mixed source sample rates (at least 24 kHz / 32 kHz / 44.1 kHz across
+  # inspected subsets). Using this branch may cause declared-sample-count
+  # mismatches unless the processed subset is known to be uniformly 32 kHz.
   input_audio_sampling_rate=32000
 fi
 
 if [[ "$language" == "zh" ]]; then
   vocab_size=2000
-  lang_dir="${data_root}/lang_bpe_zh_${vocab_size}"
+  lang_dir="${data_root}/lang_hybrid_zh"
   transcript_file="${lang_dir}/transcript_chars.txt"
 else
   vocab_size=500
@@ -218,6 +226,7 @@ fi
 if [ $stage -le 3 ] && [ $stop_stage -ge 3 ]; then
   if [ "$use_resampled_audio" = false ]; then
     log "Stage 3: Skipping offline resampling because use_resampled_audio=false"
+    log "Stage 3: Warning: downstream stages will assume 32000 Hz input audio; this is unsafe for mixed-rate fc71e07 subsets unless you have verified the subset is uniformly 32 kHz"
   else
     log "Stage 3: Offline resample recordings to ${target_sample_rate} Hz"
     mkdir -p "$resampled_manifest_dir" "$resampled_recording_split_dir" "$cache_dir" "$resample_lock_dir"

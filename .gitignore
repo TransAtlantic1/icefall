@@ -36,3 +36,16 @@ node_modules
 .DS_Store
 *.fst
 *.arpa
+AGENTS.md
+
+# Local / temporary Emilia artifacts
+/egs/emilia/ASR/logs/
+/egs/emilia/CLAUDE.md
+/egs/emilia_24k/ASR/run_public_partial_train_feature_probe.sh
+/egs/emilia_24k/*_report.md
+/egs/emilia_24k_multilang/report/*
+!/egs/emilia_24k_multilang/report/recipe/
+/egs/emilia_24k_multilang/report/recipe/*
+!/egs/emilia_24k_multilang/report/recipe/*.py
+/backup/runtime_dumps/
+core.*

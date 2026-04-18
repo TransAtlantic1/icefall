@@ -37,6 +37,7 @@ node_modules
 *.fst
 *.arpa
 AGENTS.md
+/egs/emilia_24k_multilang/AGENTS.md
 
 # Local / temporary Emilia artifacts
 /egs/emilia/ASR/logs/

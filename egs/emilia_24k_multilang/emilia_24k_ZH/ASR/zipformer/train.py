@@ -191,7 +191,7 @@ def normalize_emilia_args(args: argparse.Namespace) -> argparse.Namespace:
     args.exp_dir = Path(
         defaults["exp_dir"] if getattr(args, "exp_dir", None) in (None, "") else args.exp_dir
     )
-    if getattr(args, "auto_exp_subdir", True) and not is_resume_requested(args):
+    if hasattr(args, "auto_exp_subdir") and getattr(args, "auto_exp_subdir", True) and not is_resume_requested(args):
         args.exp_dir = create_fresh_run_exp_dir(args.exp_dir)
     args.bpe_model = str(
         defaults["bpe_model"]
@@ -761,7 +761,7 @@ def get_parser():
     parser.add_argument(
         "--save-every-n",
         type=int,
-        default=8000,
+        default=10000,
         help="""Save checkpoint after processing this number of batches"
         periodically. We save checkpoint to exp-dir/ whenever
         params.batch_idx_train % save_every_n == 0. The checkpoint filename
@@ -769,6 +769,13 @@ def get_parser():
         Note: It also saves checkpoint to `exp-dir/epoch-xxx.pt` at the
         end of each epoch where `xxx` is the epoch number counting from 1.
         """,
+    )
+
+    parser.add_argument(
+        "--valid-interval",
+        type=int,
+        default=5000,
+        help="Run validation after processing this number of batches.",
     )
 
     parser.add_argument(
@@ -896,7 +903,7 @@ def get_params() -> AttributeDict:
             "batch_idx_train": 0,
             "log_interval": 500,
             "reset_interval": 2000,
-            "valid_interval": 20000,
+            "valid_interval": 5000,
             # parameters for zipformer
             "feature_dim": 100,
             "subsampling_factor": 4,  # not passed in, this is fixed.

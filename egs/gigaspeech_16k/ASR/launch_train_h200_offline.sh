@@ -96,11 +96,11 @@ cd "${script_dir}"
 exec python zipformer/train.py \
   --world-size "${WORLD_SIZE}" \
   --master-port "${MASTER_PORT}" \
-  --num-epochs "${NUM_EPOCHS:-30}" \
+  --num-epochs "${NUM_EPOCHS:-40}" \
   --use-fp16 "${USE_FP16:-1}" \
   --subset "${SUBSET:-M}" \
   --enable-musan "${ENABLE_MUSAN:-False}" \
-  --max-duration "${MAX_DURATION:-700}" \
+  --max-duration "${MAX_DURATION:-1000}" \
   --log-interval "${LOG_INTERVAL:-50}" \
   --valid-interval "${VALID_INTERVAL:-500}" \
   --tensorboard "${TENSORBOARD:-True}" \

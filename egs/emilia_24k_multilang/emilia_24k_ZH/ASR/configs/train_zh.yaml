@@ -1,19 +1,19 @@
 # Command-line flags still override values from this file.
 
 language: zh
-artifact_root: /inspire/hdd/project/embodied-multimodality/public/emilia/fc71e07/icefall_emilia_zh_24k
-manifest_dir: /inspire/hdd/project/embodied-multimodality/public/emilia/fc71e07/icefall_emilia_zh_24k/data/fbank/zh
-lang_dir: /inspire/hdd/project/embodied-multimodality/public/emilia/fc71e07/icefall_emilia_zh_24k/data/lang_hybrid_zh
-exp_dir: /inspire/hdd/project/embodied-multimodality/public/emilia/fc71e07/icefall_emilia_zh_24k/exp/zipformer/emilia-zh-24k-h200-md1000
+artifact_root: /inspire/qb-ilm/project/embodied-multimodality/chenxie-25019/public/emilia/fc71e07/icefall_emilia_zh_24k
+manifest_dir: /inspire/qb-ilm/project/embodied-multimodality/chenxie-25019/public/emilia/fc71e07/icefall_emilia_zh_24k/data/fbank/zh
+lang_dir: /inspire/qb-ilm/project/embodied-multimodality/chenxie-25019/public/emilia/fc71e07/icefall_emilia_zh_24k/data/lang_hybrid_zh
+exp_dir: /inspire/qb-ilm/project/embodied-multimodality/chenxie-25019/public/emilia/fc71e07/icefall_emilia_zh_24k/exp/zipformer/emilia-zh-24k-h200-md1000
 
 world_size: 8
-num_epochs: 30
+num_epochs: 10
 start_epoch: 1
 start_batch: 0
 
 max_duration: 1000
 ref_duration: 600
-num_workers: 4
+num_workers: 24
 num_buckets: 30
 bucketing_sampler: true
 shuffle: true
@@ -37,6 +37,7 @@ wandb_run_name: emilia-zh-24k-h200-md1000
 wandb_tags: emilia,zh,24k,h200,hybrid,md1000
 wandb_resume: allow
 
-save_every_n: 8000
+save_every_n: 5000
 keep_last_k: 30
 average_period: 200
+valid_interval: 1000

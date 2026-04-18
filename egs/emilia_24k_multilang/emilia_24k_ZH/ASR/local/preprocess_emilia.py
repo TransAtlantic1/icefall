@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 from pathlib import Path
+from typing import Dict
 
 import lhotse
 from lhotse import CutSet, SupervisionSet, load_manifest_lazy
@@ -11,6 +12,84 @@ from lhotse.serialization import load_manifest_lazy_or_eager
 
 from split_utils import manifest_prefix, validate_language
 from text_normalization import normalize_text
+
+
+def trim_supervisions_to_recordings_sequentially(
+    recordings,
+    supervisions,
+    output_path: Path,
+) -> Dict[str, int]:
+    """
+    Streamingly align supervisions to recordings and trim any supervision whose
+    end exceeds the corresponding recording duration.
+
+    In this recipe, the recordings manifest order is preserved across stages,
+    while transcript normalization may drop some supervisions. That means the
+    supervisions are a subsequence of the recordings and can be aligned with a
+    single forward pass without materializing a full recording-id index.
+    """
+
+    if output_path.exists():
+        output_path.unlink()
+
+    stats = {
+        "trim_input_supervisions": 0,
+        "trim_written_supervisions": 0,
+        "trimmed_supervisions": 0,
+        "removed_supervisions": 0,
+        "skipped_recordings_without_supervision": 0,
+    }
+
+    recording_iter = iter(recordings)
+    current_recording = next(recording_iter, None)
+    previous_supervision_recording_id = None
+
+    with SupervisionSet.open_writer(output_path) as writer:
+        for sup in supervisions:
+            stats["trim_input_supervisions"] += 1
+
+            if previous_supervision_recording_id == sup.recording_id:
+                raise ValueError(
+                    "Expected at most one supervision per recording in Emilia "
+                    f"stage 4, but saw multiple supervisions for recording_id="
+                    f"{sup.recording_id}. "
+                    "The sequential trimming logic relies on a 1:1 "
+                    "recording-to-supervision mapping."
+                )
+
+            while (
+                current_recording is not None
+                and current_recording.id != sup.recording_id
+            ):
+                stats["skipped_recordings_without_supervision"] += 1
+                current_recording = next(recording_iter, None)
+
+            if current_recording is None:
+                raise ValueError(
+                    "Unable to align supervision "
+                    f"{sup.id} with the recordings manifest. "
+                    "This recipe expects normalized supervisions to remain "
+                    "an ordered subsequence of recordings."
+                )
+
+            fixed_sup = sup
+            if sup.start >= current_recording.duration:
+                stats["removed_supervisions"] += 1
+            else:
+                if sup.end > current_recording.duration:
+                    fixed_sup = sup.trim(end=current_recording.duration)
+                    stats["trimmed_supervisions"] += 1
+
+                if fixed_sup.duration <= 0:
+                    stats["removed_supervisions"] += 1
+                else:
+                    writer.write(fixed_sup)
+                    stats["trim_written_supervisions"] += 1
+
+            previous_supervision_recording_id = sup.recording_id
+            current_recording = next(recording_iter, None)
+
+    return stats
 
 
 def get_args():
@@ -99,10 +178,15 @@ def main():
         normalized_supervisions_path = (
             args.output_dir / f"{prefix}_supervisions_{split}_norm.jsonl.gz"
         )
+        fixed_supervisions_path = (
+            args.output_dir / f"{prefix}_supervisions_{split}_norm_fixed.jsonl.gz"
+        )
         raw_cuts_path = args.output_dir / f"{prefix}_cuts_{split}_raw.jsonl.gz"
 
         if normalized_supervisions_path.exists():
             normalized_supervisions_path.unlink()
+        if fixed_supervisions_path.exists():
+            fixed_supervisions_path.unlink()
         if raw_cuts_path.exists():
             raw_cuts_path.unlink()
 
@@ -159,6 +243,25 @@ def main():
             }
             continue
 
+        trim_stats = trim_supervisions_to_recordings_sequentially(
+            recordings=recordings,
+            supervisions=supervisions,
+            output_path=fixed_supervisions_path,
+        )
+        recordings = load_recordings(
+            prefix=prefix,
+            split=split,
+            preferred_dir=recordings_manifest_dir,
+            fallback_dir=args.manifest_dir,
+        )
+        supervisions = load_manifest_lazy_or_eager(fixed_supervisions_path)
+        if recordings is None or supervisions is None:
+            raise ValueError(
+                f"Failed to reload fixed manifests for split {split}: "
+                f"recordings={recordings is not None}, "
+                f"supervisions={supervisions is not None}"
+            )
+
         cuts = CutSet.from_manifests(recordings=recordings, supervisions=supervisions)
         if split == "train" and args.speed_perturb:
             cuts = cuts + cuts.perturb_speed(0.9) + cuts.perturb_speed(1.1)
@@ -169,12 +272,16 @@ def main():
             "kept_supervisions": kept,
             "raw_cuts_path": str(raw_cuts_path),
             "recordings_manifest_dir": str(recordings_manifest_dir),
+            "fixed_supervisions_path": str(fixed_supervisions_path),
+            **trim_stats,
         }
         logging.info(
-            "Prepared %s split: kept %s/%s supervisions",
+            "Prepared %s split: kept %s/%s supervisions, trimmed=%s removed=%s",
             split,
             kept,
             total,
+            trim_stats["trimmed_supervisions"],
+            trim_stats["removed_supervisions"],
         )
 
     summary_path = args.output_dir / f"{prefix}_preprocess_summary.json"

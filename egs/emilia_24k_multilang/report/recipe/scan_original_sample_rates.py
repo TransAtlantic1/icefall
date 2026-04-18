@@ -16,8 +16,8 @@ from typing import Dict, Iterable, Iterator, List, Optional, Sequence
 
 DEFAULT_DATASET_ROOT = Path("/inspire/dataset/emilia/fc71e07")
 REPORT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_OUTPUT_JSON = REPORT_ROOT / "emilia_24k_non_zh_original_sample_rate_scan.json"
-DEFAULT_OUTPUT_MD = REPORT_ROOT / "emilia_24k_non_zh_original_sample_rate_report.md"
+DEFAULT_OUTPUT_JSON = REPORT_ROOT / "emilia_24k_original_sample_rate_scan.json"
+DEFAULT_OUTPUT_MD = REPORT_ROOT / "emilia_24k_original_sample_rate_report.md"
 DEFAULT_EXCLUDE_LANGUAGES = {"ZH"}
 MP3_SAMPLE_RATES = {
     3: (44100, 48000, 32000),

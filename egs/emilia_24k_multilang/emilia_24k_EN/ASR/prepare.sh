@@ -12,7 +12,7 @@ stage=0
 stop_stage=10
 
 language=zh
-public_root="/inspire/hdd/project/embodied-multimodality/public"
+public_root="/inspire/qb-ilm/project/embodied-multimodality/chenxie-25019/public"
 default_dataset_root="/inspire/dataset/emilia/fc71e07"
 
 download_root=""
@@ -34,7 +34,7 @@ num_splits=100
 start=0
 stop=-1
 num_workers=20
-batch_duration=600
+batch_duration=1000
 
 feature_num_splits=""
 feature_start=""
@@ -45,7 +45,10 @@ feature_device="auto"
 
 target_sample_rate=24000
 use_resampled_audio=true
-speed_perturb=true
+# For the local fc71e07 Emilia copy, source audio is not uniformly 32 kHz.
+# Keep this enabled unless you have separately verified the exact source
+# sample-rate distribution for the subset you are processing.
+speed_perturb=false
 enable_musan=false
 
 max_jsonl_files=-1
@@ -107,6 +110,11 @@ train_feature_split_dir="${fbank_dir}/train_split_${feature_num_splits}"
 cache_dir="${audio_cache_root}/emilia/${language}"
 input_audio_sampling_rate=$target_sample_rate
 if [ "$use_resampled_audio" = false ]; then
+  # Warning: this fallback assumes a uniform 32 kHz source distribution.
+  # That assumption is false for the local fc71e07 copy, which contains
+  # mixed source sample rates (at least 24 kHz / 32 kHz / 44.1 kHz across
+  # inspected subsets). Using this branch may cause declared-sample-count
+  # mismatches unless the processed subset is known to be uniformly 32 kHz.
   input_audio_sampling_rate=32000
 fi
 
@@ -217,6 +225,7 @@ fi
 if [ $stage -le 3 ] && [ $stop_stage -ge 3 ]; then
   if [ "$use_resampled_audio" = false ]; then
     log "Stage 3: Skipping offline resampling because use_resampled_audio=false"
+    log "Stage 3: Warning: downstream stages will assume 32000 Hz input audio; this is unsafe for mixed-rate fc71e07 subsets unless you have verified the subset is uniformly 32 kHz"
   else
     log "Stage 3: Offline resample recordings to ${target_sample_rate} Hz"
     mkdir -p "$resampled_manifest_dir" "$resampled_recording_split_dir" "$cache_dir" "$resample_lock_dir"

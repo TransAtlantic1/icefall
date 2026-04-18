@@ -107,12 +107,12 @@ you can do:
 
 - For streaming model:
 
-To use the generated file with `zipformer/decode.py` and `zipformer/streaming_decode.py`, you can do:
+To use the generated file with the recipe-local `zipformer/decode.py`, you can do:
 
     cd /path/to/exp_dir
     ln -s pretrained.pt epoch-9999.pt
 
-    cd /path/to/egs/gigaspeech/ASR
+    cd /path/to/egs/emilia_24k/ASR
 
     # simulated streaming decoding
     ./zipformer/decode.py \
@@ -126,17 +126,10 @@ To use the generated file with `zipformer/decode.py` and `zipformer/streaming_de
         --decoding-method greedy_search \
         --bpe-model data/lang_bpe_500/bpe.model
 
-    # chunk-wise streaming decoding
-    ./zipformer/streaming_decode.py \
-        --exp-dir ./zipformer/exp \
-        --epoch 9999 \
-        --avg 1 \
-        --max-duration 600 \
-        --causal 1 \
-        --chunk-size 16 \
-        --left-context-frames 128 \
-        --decoding-method greedy_search \
-        --bpe-model data/lang_bpe_500/bpe.model
+This recipe currently does not provide a recipe-local `zipformer/streaming_decode.py`.
+If such an online waveform entry is added later, it should keep the same frontend
+contract as the main 24k pipeline: decode from raw source audio and resample to
+24 kHz in a single stage, rather than using an intermediate sampling rate.
 
 Check ./pretrained.py for its usage.
 
@@ -240,6 +233,17 @@ def get_parser():
         type=str,
         default=None,
         help="Path to the tokens.txt",
+    )
+
+    parser.add_argument(
+        "--artifact-root",
+        type=str,
+        default=None,
+        help=(
+            "Optional root for Emilia 24k artifacts. If omitted, use "
+            "EMILIA_ARTIFACT_ROOT when available; otherwise use the recipe's "
+            "default public artifact root for the selected language."
+        ),
     )
 
     parser.add_argument(

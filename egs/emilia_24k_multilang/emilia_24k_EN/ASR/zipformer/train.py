@@ -53,6 +53,7 @@ It supports training with:
 import argparse
 import copy
 import logging
+import os
 import sys
 import warnings
 from pathlib import Path
@@ -116,24 +117,50 @@ WANDB_RECIPE_CONFIG = {
     "feature_type": "f5tts_mel",
     "feature_sample_rate": 24000,
 }
+DEFAULT_PUBLIC_ROOT = Path(
+    "/inspire/qb-ilm/project/embodied-multimodality/chenxie-25019/public"
+)
 
 
-def get_language_defaults(language: str) -> Dict[str, Path]:
+def get_default_artifact_root(language: str) -> Path:
     language = validate_language(language)
+    return DEFAULT_PUBLIC_ROOT / "emilia" / "fc71e07" / f"icefall_emilia_{language}_24k"
+
+
+def get_language_defaults(
+    language: str, artifact_root: Optional[Union[str, Path]] = None
+) -> Dict[str, Path]:
+    language = validate_language(language)
+    artifact_root = (
+        get_default_artifact_root(language)
+        if artifact_root in (None, "")
+        else Path(artifact_root)
+    )
+    data_root = artifact_root / "data"
+    exp_root = artifact_root / "exp" / "zipformer"
     vocab_size = 2000 if language == "zh" else 500
-    lang_dir = Path(f"data/lang_bpe_{language}_{vocab_size}")
+    lang_dir = data_root / f"lang_bpe_{language}_{vocab_size}"
     return {
-        "manifest_dir": Path("data/fbank"),
+        "manifest_dir": data_root / "fbank",
         "lang_dir": lang_dir,
         "bpe_model": lang_dir / "bpe.model",
         "tokens": lang_dir / "tokens.txt",
-        "exp_dir": Path(f"zipformer/exp-{language}-24k"),
+        "exp_dir": exp_root / f"exp-{language}-24k",
     }
 
 
 def normalize_emilia_args(args: argparse.Namespace) -> argparse.Namespace:
-    defaults = get_language_defaults(args.language)
+    artifact_root = getattr(args, "artifact_root", None)
+    if artifact_root in (None, ""):
+        artifact_root = os.environ.get("EMILIA_ARTIFACT_ROOT", "")
+
+    defaults = get_language_defaults(args.language, artifact_root)
     args.language = validate_language(args.language)
+    args.artifact_root = str(
+        Path(artifact_root)
+        if artifact_root not in (None, "")
+        else get_default_artifact_root(args.language)
+    )
 
     manifest_dir = getattr(args, "manifest_dir", None)
     args.manifest_dir = Path(defaults["manifest_dir"] if manifest_dir is None else manifest_dir)
@@ -518,6 +545,20 @@ def get_parser():
         type=str,
         default=None,
         help="Language directory containing the BPE artifacts for this run.",
+    )
+    parser.add_argument(
+        "--artifact-root",
+        type=str,
+        default=None,
+        help=(
+            "Optional root for Emilia 24k artifacts outside the repo. "
+            "When set, manifest-dir defaults to <artifact-root>/data/fbank, "
+            "lang-dir defaults to <artifact-root>/data/lang_bpe_<lang>_<vocab>, "
+            "and exp-dir defaults to <artifact-root>/exp/zipformer/exp-<lang>-24k. "
+            "If omitted, EMILIA_ARTIFACT_ROOT is used when available; otherwise "
+            "the recipe defaults to /inspire/qb-ilm/project/embodied-multimodality/"
+            "chenxie-25019/public/emilia/fc71e07/icefall_emilia_<lang>_24k."
+        ),
     )
 
     parser.add_argument(

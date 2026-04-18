@@ -17,6 +17,7 @@
 - 默认 stage 4 会优先使用这些 resampled manifests 生成 raw cuts
 - 默认批量 `zipformer/decode.py` 消费的是预计算好的 `24 kHz` 特征
 - 如果后续补在线取波形入口，也应继续保持 `raw source -> 24 kHz` 单次重采样
+- 当前 stage 4 会在生成 raw cuts 前，先把 normalized supervisions 按 recordings 的真实时长顺序流式对齐，并裁掉任何 `supervision.end > recording.duration` 的条目
 
 `prepare_data.sh` 只是兼容性包装脚本，内部会直接转发到 `prepare.sh`。
 
@@ -37,17 +38,17 @@ conda activate icefall
 export PYTHONPATH=/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall${PYTHONPATH:+:$PYTHONPATH}
 export LD_LIBRARY_PATH=/opt/conda/envs/icefall/lib/python3.12/site-packages/nvidia/cuda_nvrtc/lib:/opt/conda/envs/icefall/lib/python3.12/site-packages/nvidia/cuda_runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
-export PUBLIC_ROOT=/inspire/hdd/project/embodied-multimodality/public
+export PUBLIC_ROOT=/inspire/qb-ilm/project/embodied-multimodality/chenxie-25019/public
 export DATASET_ROOT=/inspire/dataset/emilia/fc71e07
 export ARTIFACT_ROOT=$PUBLIC_ROOT/emilia/fc71e07/icefall_emilia_zh_24k
 export EMILIA_ARTIFACT_ROOT=$ARTIFACT_ROOT
-export LANG=zh
+export LANGUAGE=zh
 ```
 
-代码里的默认数据集根目录已经切到 `/inspire/dataset/emilia/fc71e07`。根据 [fc71e07_dataset_report.md](/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/fc71e07_dataset_report.md)，这就是当前本地 Emilia 副本的真实根目录。这个 recipe 的默认输出根目录也已经切到当前项目的 `public`，也就是 `/inspire/hdd/project/embodied-multimodality/public`。推荐的 `zh` 工作目录布局如下：
+代码里的默认数据集根目录已经切到 `/inspire/dataset/emilia/fc71e07`。根据 [fc71e07_dataset_report.md](/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/fc71e07_dataset_report.md)，这就是当前本地 Emilia 副本的真实根目录。这个 recipe 的默认输出根目录也已经切到 `qb-ilm` 下的 `chenxie-25019/public`，也就是 `/inspire/qb-ilm/project/embodied-multimodality/chenxie-25019/public`。推荐的 `zh` 工作目录布局如下：
 
 ```bash
-PUBLIC_ROOT=/inspire/hdd/project/embodied-multimodality/public
+PUBLIC_ROOT=/inspire/qb-ilm/project/embodied-multimodality/chenxie-25019/public
 DATASET_ROOT=/inspire/dataset/emilia/fc71e07
 ARTIFACT_ROOT=$PUBLIC_ROOT/emilia/fc71e07/icefall_emilia_zh_24k
 EMILIA_ARTIFACT_ROOT=$ARTIFACT_ROOT
@@ -101,6 +102,11 @@ LANG=zh
 - `feature_device=auto`
 
 `local/compute_fbank_emilia.py` 使用的特征提取器是 `local/f5tts_mel_extractor.py`，训练特征维度在 `zipformer/train.py` 中固定为 100。
+
+补充说明：
+- 当前仓库内的默认命令、runbook 示例和 `prepare.sh` 默认值都走 `use_resampled_audio=true`
+- 也就是说，recipe 当前主链路会先做 stage 3 离线重采样，再让后续 raw cuts 和特征提取消费 `24 kHz` 缓存
+- stage 4 现在会在生成 raw cuts 前，先把 normalized supervisions 按 recordings 的真实时长顺序流式对齐，并裁掉任何 `supervision.end > recording.duration` 的条目
 
 ## 3. 按 Stage 与设备划分的运行方式
 
@@ -172,20 +178,30 @@ bash prepare.sh \
 - 已经完成的 shard 会按输出 manifest 自动复用；重新启动时不要删除已完成结果，也不要传 `--overwrite`
 - 现在 stage 3 增加了共享盘 shard 锁；即使多个机器误碰到同一个 shard，也会只有一个 worker 真正处理它，其他 worker 会跳过
 
-4 实例示例：
+9 机器示例：
 
 ```bash
-./run_public_resample_shard.sh --instance-index 0 --detach true
-./run_public_resample_shard.sh --instance-index 1 --detach true
-./run_public_resample_shard.sh --instance-index 2 --detach true
-./run_public_resample_shard.sh --instance-index 3 --detach true
+./run_public_resample_shard.sh --instance-index 0 --num-instances 9 --detach true
+./run_public_resample_shard.sh --instance-index 1 --num-instances 9 --detach true
+./run_public_resample_shard.sh --instance-index 2 --num-instances 9 --detach true
+./run_public_resample_shard.sh --instance-index 3 --num-instances 9 --detach true
+./run_public_resample_shard.sh --instance-index 4 --num-instances 9 --detach true
+./run_public_resample_shard.sh --instance-index 5 --num-instances 9 --detach true
+./run_public_resample_shard.sh --instance-index 6 --num-instances 9 --detach true
+./run_public_resample_shard.sh --instance-index 7 --num-instances 9 --detach true
+./run_public_resample_shard.sh --instance-index 8 --num-instances 9 --detach true
 ```
 
-在 `recording_num_splits=1000`、`num_instances=4` 时，区间是：
-- worker 0：`[0, 250)`
-- worker 1：`[250, 500)`
-- worker 2：`[500, 750)`
-- worker 3：`[750, 1000)`
+在 `recording_num_splits=1000`、`num_instances=9` 时，区间是：
+- worker 0：`[0, 112)`
+- worker 1：`[112, 224)`
+- worker 2：`[224, 336)`
+- worker 3：`[336, 448)`
+- worker 4：`[448, 560)`
+- worker 5：`[560, 672)`
+- worker 6：`[672, 784)`
+- worker 7：`[784, 896)`
+- worker 8：`[896, 1000)`
 
 只有 worker 0 会顺带处理 `dev/test` 的重采样。
 
@@ -194,18 +210,14 @@ bash prepare.sh \
 - pid 文件：`$ARTIFACT_ROOT/logs/launcher.resample.<lang>.<instance>of<num_instances>.pid`
 - 实际 worker 日志：`$ARTIFACT_ROOT/logs/resample.<lang>.<start>-<stop>.log`
 
-### 4.3 Stage 3：按不均匀剩余 shard 重启
+### 4.3 Stage 3：9 机器按不均匀剩余 shard 重启
 
-如果 stage 3 已经跑了一段时间，完成分布明显不均匀，就不要再用均匀切片方式重启。当前这套 fc71e07 中文数据的实际剩余 shard 可以整理成下面 8 段：
+如果 stage 3 已经跑了一段时间，完成分布明显不均匀，就不要再用均匀切片方式重启。这里推荐的做法是：
 
-- 机器 0：`[92, 171)`
-- 机器 1：`[171, 250)`
-- 机器 2：`[371, 435)`
-- 机器 3：`[435, 500)`
-- 机器 4：`[610, 680)`
-- 机器 5：`[680, 750)`
-- 机器 6：`[843, 921)`
-- 机器 7：`[921, 1000)`
+- 先统计已经完成的 shard
+- 只对剩余 shard 重新划分区间
+- 把剩余区间切成 9 段互不重叠的 `[start, stop)`
+- 9 台机器各自只接管自己的那一段
 
 这时不要再手写 `nohup bash prepare.sh ... --resample-start ... --resample-stop ... &`。请直接使用 [run_public_resample_range.sh](/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/emilia_24k/ASR/run_public_resample_range.sh)：
 
@@ -218,87 +230,33 @@ bash prepare.sh \
 重启前的原则：
 
 - 先在每台机器上停掉它本机已有的旧 stage 3 进程
-- 对于机器 0-3，如果之前跑过旧的 4 机大区间，还要先把对应旧大区间停掉
+- 如果之前跑过旧的大区间，还要先把对应旧区间停掉
 - 对于所有机器，都再停一次本机将要接管的新 range，确保本机没有重复任务
 - 停完后用 `pgrep` 确认本机没有残留 stage 3 进程，再执行新的 range launcher
 
-执行清单如下。
+执行方式改成下面这个 9 机模板。先根据当前剩余 shard 统计结果，填好 9 段真实区间：
 
-机器 0：
+- 机器 0：`[R0_START, R0_STOP)`
+- 机器 1：`[R1_START, R1_STOP)`
+- 机器 2：`[R2_START, R2_STOP)`
+- 机器 3：`[R3_START, R3_STOP)`
+- 机器 4：`[R4_START, R4_STOP)`
+- 机器 5：`[R5_START, R5_STOP)`
+- 机器 6：`[R6_START, R6_STOP)`
+- 机器 7：`[R7_START, R7_STOP)`
+- 机器 8：`[R8_START, R8_STOP)`
 
-```bash
-./stop_public_resample_shard.sh --resample-start 0 --resample-stop 250
-./stop_public_resample_shard.sh --resample-start 92 --resample-stop 171
-sleep 3
-pgrep -af 'prepare.sh .*--stage 3|local/resample_recordings_to_flac.py'
-./run_public_resample_range.sh --resample-start 92 --resample-stop 171
-```
-
-机器 1：
-
-```bash
-./stop_public_resample_shard.sh --resample-start 250 --resample-stop 500
-./stop_public_resample_shard.sh --resample-start 171 --resample-stop 250
-sleep 3
-pgrep -af 'prepare.sh .*--stage 3|local/resample_recordings_to_flac.py'
-./run_public_resample_range.sh --resample-start 171 --resample-stop 250
-```
-
-机器 2：
+每台机器都执行同一个模板，只把 `NEW_START/NEW_STOP` 和本机历史旧区间替换掉：
 
 ```bash
-./stop_public_resample_shard.sh --resample-start 500 --resample-stop 750
-./stop_public_resample_shard.sh --resample-start 371 --resample-stop 435
+./stop_public_resample_shard.sh --resample-start OLD_START --resample-stop OLD_STOP
+./stop_public_resample_shard.sh --resample-start NEW_START --resample-stop NEW_STOP
 sleep 3
 pgrep -af 'prepare.sh .*--stage 3|local/resample_recordings_to_flac.py'
-./run_public_resample_range.sh --resample-start 371 --resample-stop 435
+./run_public_resample_range.sh --resample-start NEW_START --resample-stop NEW_STOP
 ```
 
-机器 3：
-
-```bash
-./stop_public_resample_shard.sh --resample-start 750 --resample-stop 1000
-./stop_public_resample_shard.sh --resample-start 435 --resample-stop 500
-sleep 3
-pgrep -af 'prepare.sh .*--stage 3|local/resample_recordings_to_flac.py'
-./run_public_resample_range.sh --resample-start 435 --resample-stop 500
-```
-
-机器 4：
-
-```bash
-./stop_public_resample_shard.sh --resample-start 610 --resample-stop 680
-sleep 3
-pgrep -af 'prepare.sh .*--stage 3|local/resample_recordings_to_flac.py'
-./run_public_resample_range.sh --resample-start 610 --resample-stop 680
-```
-
-机器 5：
-
-```bash
-./stop_public_resample_shard.sh --resample-start 680 --resample-stop 750
-sleep 3
-pgrep -af 'prepare.sh .*--stage 3|local/resample_recordings_to_flac.py'
-./run_public_resample_range.sh --resample-start 680 --resample-stop 750
-```
-
-机器 6：
-
-```bash
-./stop_public_resample_shard.sh --resample-start 843 --resample-stop 921
-sleep 3
-pgrep -af 'prepare.sh .*--stage 3|local/resample_recordings_to_flac.py'
-./run_public_resample_range.sh --resample-start 843 --resample-stop 921
-```
-
-机器 7：
-
-```bash
-./stop_public_resample_shard.sh --resample-start 921 --resample-stop 1000
-sleep 3
-pgrep -af 'prepare.sh .*--stage 3|local/resample_recordings_to_flac.py'
-./run_public_resample_range.sh --resample-start 921 --resample-stop 1000
-```
+如果某台机器之前没有旧区间，就只保留第二条 stop 命令即可。
 
 如果 `sleep 3` 之后那条 `pgrep` 还有残留，再手动补一轮强杀：
 
@@ -329,6 +287,39 @@ $ARTIFACT_ROOT/locks/resample/$LANG/24000/recordings_train_split_1000
 - 如果某个 shard 正好在迁移瞬间被别的机器抢到，共享盘锁会让后来的 worker 跳过该 shard，避免撞写
 
 完成后继续跑 stage 4：
+
+```bash
+bash prepare.sh \
+  --language "$LANG" \
+  --dataset-root "$DATASET_ROOT" \
+  --artifact-root "$ARTIFACT_ROOT" \
+  --stage 4 \
+  --stop-stage 4
+```
+
+### 4.4 Stage 4 的 supervision 时长修正
+
+`emilia_24k_multilang/emilia_24k_ZH` 的 stage 4 现在包含一个额外的 manifest 修正步骤，原因是本地 `fc71e07` 副本里，JSONL 的 `duration` 和真实音频解码时长并不总是完全一致。
+
+典型现象是：
+- `prepare_emilia.py` 早期生成的 supervision 时长直接继承 JSONL 里的 `duration`
+- stage 3 的 resampled recording manifest 则使用真实 `num_frames / sample_rate`
+- 两边只要有毫秒以下的微小差异，就可能在 raw cuts 阶段触发 `supervision_end > cut.duration`
+
+当前修复后的 stage 4 行为是：
+- 先做文本归一化
+- 再把归一化后的 supervisions 和 recordings 顺序对齐
+- 如果 `supervision.end > recording.duration`，就把 supervision 裁到 recording 末尾
+- 如果 supervision 起点已经晚于 recording 末尾，直接丢弃该条 supervision
+
+修正后的中间产物会写到：
+- `$ARTIFACT_ROOT/data/fbank/<lang>/emilia_<lang>_supervisions_<split>_norm_fixed.jsonl.gz`
+
+如果你之前在这次修复之前已经生成过 old raw cuts，需要注意：
+- 至少重跑一次 `stage 4`，让 `*_cuts_{train,dev,test}_raw.jsonl.gz` 用新的修正逻辑重建
+- 如果 `stage 5` 或 `stage 7` 也已经基于旧 raw cuts 生成过特征 cuts，还需要删除对应旧输出后再重跑这些阶段，因为脚本会跳过已存在文件
+
+最小重跑命令：
 
 ```bash
 bash prepare.sh \
@@ -419,20 +410,30 @@ bash prepare.sh \
 
 Stage 7 可以完全在 CPU 上跑。这个 recipe 提供了 [run_public_cpu_feature_shard.sh](/inspire/hdd/project/embodied-multimodality/chenxie-25019/fj/icefall/egs/emilia_24k/ASR/run_public_cpu_feature_shard.sh)，固定执行 stage 7，并自动根据 `--instance-index` 和 `--num-instances` 计算 `feature_start/feature_stop`。它也支持 `--detach true`，会自动用 `nohup` 后台运行。
 
-4 实例示例：
+9 机器示例：
 
 ```bash
-./run_public_cpu_feature_shard.sh --instance-index 0 --detach true
-./run_public_cpu_feature_shard.sh --instance-index 1 --detach true
-./run_public_cpu_feature_shard.sh --instance-index 2 --detach true
-./run_public_cpu_feature_shard.sh --instance-index 3 --detach true
+./run_public_cpu_feature_shard.sh --instance-index 0 --num-instances 9 --detach true
+./run_public_cpu_feature_shard.sh --instance-index 1 --num-instances 9 --detach true
+./run_public_cpu_feature_shard.sh --instance-index 2 --num-instances 9 --detach true
+./run_public_cpu_feature_shard.sh --instance-index 3 --num-instances 9 --detach true
+./run_public_cpu_feature_shard.sh --instance-index 4 --num-instances 9 --detach true
+./run_public_cpu_feature_shard.sh --instance-index 5 --num-instances 9 --detach true
+./run_public_cpu_feature_shard.sh --instance-index 6 --num-instances 9 --detach true
+./run_public_cpu_feature_shard.sh --instance-index 7 --num-instances 9 --detach true
+./run_public_cpu_feature_shard.sh --instance-index 8 --num-instances 9 --detach true
 ```
 
-如果 `feature_num_splits=100` 且 `num_instances=4`，区间是：
-- worker 0：`[0, 25)`
-- worker 1：`[25, 50)`
-- worker 2：`[50, 75)`
-- worker 3：`[75, 100)`
+如果 `feature_num_splits=100` 且 `num_instances=9`，区间是：
+- worker 0：`[0, 12)`
+- worker 1：`[12, 24)`
+- worker 2：`[24, 36)`
+- worker 3：`[36, 48)`
+- worker 4：`[48, 60)`
+- worker 5：`[60, 72)`
+- worker 6：`[72, 84)`
+- worker 7：`[84, 96)`
+- worker 8：`[96, 100)`
 
 每个实例会生成两类日志：
 - launcher 日志：`$ARTIFACT_ROOT/logs/launcher.feature.cpu.<lang>.<instance>.nohup.log`
@@ -605,6 +606,63 @@ python zipformer/train.py \
   --wandb-group "${LANG}-compare" \
   --wandb-run-name "emilia-${LANG}-24k-f5tts"
 ```
+
+### 9.1 两种 step 口径
+
+训练里要区分两种不同的“step”：
+
+1. 原始 step
+   - 就是 `batch_idx_train`
+   - 表示“优化器一共更新了多少步”
+   - 不关心每一步里装了多少音频时长
+
+2. 按时长折算后的 step
+   - 来自：
+
+```python
+def get_adjusted_batch_count(params):
+    return (
+        params.batch_idx_train
+        * (params.max_duration * params.world_size)
+        / params.ref_duration
+    )
+```
+
+   - 表示“如果每一步都按参考时长 `ref_duration` 在训练，那当前等价于训练了多少步”
+
+直观理解：
+
+- `max_duration=4000` 的单步比 `max_duration=1000` 更“重”
+- 虽然 `md4000` 的原始 step 更少，但每一步处理的数据更多
+- 所以 `md4000` 的 `250` 步，可能已经接近 `md1000` 的 `1000` 步总数据量
+
+模型内部很多 `ScheduledFloat` 会通过 `set_batch_count(model, get_adjusted_batch_count(params))` 使用这个“按时长折算后的 step”，因此它们更接近按**累计数据量**在调度。
+
+但优化器学习率 scheduler `Eden` 用的仍是原始 `batch_idx_train`。因此：
+
+- 内部模型 schedule 更接近按数据量对齐
+- lr schedule 却仍按原始 step 数对齐
+
+这也是为什么改 `max_duration` 时，不能只看 batch size 和显存，还要一起看 lr scheduler。
+
+### 9.2 `max_duration` 调整的实际含义
+
+当前推荐标准配置是：
+
+- 训练：`--max-duration 1000`
+- 解码：`--max-duration 600`
+
+如果把训练从 `1000` 放大到 `4000`，通常会发生：
+
+- 单步 batch 变大
+- `steps/epoch` 大约缩小到 `1/4`
+- `Eden` 的 `warmup_batches` 和 `lr_batches` 在数据尺度上被拉长
+
+所以对 `md4000` 这类大 batch 配置，不要默认沿用 `md1000` 的 scheduler 参数。至少要重新评估：
+
+- `base_lr`
+- `lr_batches`
+- `warmup_batches`（当前代码里不是 CLI 参数，如需精细控制需要改代码）
 
 ## 10. 解码
 

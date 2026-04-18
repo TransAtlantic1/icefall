@@ -39,8 +39,18 @@ def get_args():
     parser.add_argument("--raw-cuts-path", type=Path, required=True)
     parser.add_argument("--output-cuts-path", type=Path, required=True)
     parser.add_argument("--storage-path", type=str, required=True)
-    parser.add_argument("--num-workers", type=int, default=0)
-    parser.add_argument("--batch-duration", type=float, default=600.0)
+    parser.add_argument("--num-workers", type=int, default=20)
+    parser.add_argument("--batch-duration", type=float, default=1000.0)
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="auto",
+        choices=["auto", "cpu", "cuda"],
+        help=(
+            "Feature extraction device. 'auto' uses CUDA when available, "
+            "otherwise CPU."
+        ),
+    )
     parser.add_argument(
         "--sampling-rate",
         type=int,
@@ -59,9 +69,18 @@ def main():
         logging.info("%s exists - skipping", args.output_cuts_path)
         return
 
-    device = torch.device("cuda", 0) if torch.cuda.is_available() else torch.device(
-        "cpu"
-    )
+    if args.device == "auto":
+        device = (
+            torch.device("cuda", 0)
+            if torch.cuda.is_available()
+            else torch.device("cpu")
+        )
+    elif args.device == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError("--device cuda was requested but CUDA is not available")
+        device = torch.device("cuda", 0)
+    else:
+        device = torch.device("cpu")
     extractor = F5TTSMelExtractor(
         F5TTSMelConfig(target_sample_rate=24000, n_mels=100, device=str(device))
     )

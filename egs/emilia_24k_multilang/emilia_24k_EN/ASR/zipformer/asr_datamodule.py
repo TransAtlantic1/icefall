@@ -62,8 +62,8 @@ class EmiliaAsrDataModule:
     Shared DataModule for Emilia single-language ASR experiments.
 
     It supports one language at a time (`zh` or `en`) and expects manifests
-    prepared under `data/fbank/<language>` unless an explicit language-specific
-    manifest directory is passed.
+    prepared under the recipe's default artifact-root-aware `fbank/<language>`
+    layout unless an explicit language-specific manifest directory is passed.
     """
 
     def __init__(self, args: argparse.Namespace):
@@ -87,8 +87,11 @@ class EmiliaAsrDataModule:
         group.add_argument(
             "--manifest-dir",
             type=Path,
-            default=Path("data/fbank"),
-            help="Path to a directory containing Emilia cut manifests or its parent.",
+            default=None,
+            help=(
+                "Path to a directory containing Emilia cut manifests or its parent. "
+                "If omitted, use the recipe default under the configured artifact root."
+            ),
         )
         group.add_argument(
             "--max-duration",

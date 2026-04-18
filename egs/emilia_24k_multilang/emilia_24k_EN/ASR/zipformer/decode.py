@@ -222,6 +222,17 @@ def get_parser():
     )
 
     parser.add_argument(
+        "--artifact-root",
+        type=str,
+        default=None,
+        help=(
+            "Optional root for Emilia 24k artifacts. If omitted, use "
+            "EMILIA_ARTIFACT_ROOT when available; otherwise use the recipe's "
+            "default public artifact root for the selected language."
+        ),
+    )
+
+    parser.add_argument(
         "--decoding-method",
         type=str,
         default="greedy_search",

@@ -47,5 +47,11 @@ AGENTS.md
 !/egs/emilia_24k_multilang/report/recipe/
 /egs/emilia_24k_multilang/report/recipe/*
 !/egs/emilia_24k_multilang/report/recipe/*.py
+/backup/
+/asr_op/*/backup/
+/test/**/logs/
+/test/**/outputs/
+/test/**/tmp/
+/test/**/.pytest_cache/
 /backup/runtime_dumps/
 core.*
